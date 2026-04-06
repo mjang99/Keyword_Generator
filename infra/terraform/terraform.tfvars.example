@@ -1,0 +1,35 @@
+environment = "dev"
+aws_region  = "ap-northeast-2"
+
+common_tags = {
+  Service = "keyword-generator"
+  Owner   = "insightchat"
+}
+
+hyper_tag_value = "true"
+mj_tag_value    = "true"
+
+policy_version    = "policy_v1"
+taxonomy_version  = "tax_v2026_04_03"
+generator_version = "gen_v3"
+
+generation_mode = "deterministic"
+
+enable_zip_lambdas            = false
+enable_http_api               = false
+enable_cache_validity_schedule = false
+
+zip_lambda_package_s3_bucket = "replace-with-packages-bucket"
+zip_lambda_package_s3_key    = "keyword-generator/current.zip"
+
+bedrock_inference_profile_id = null
+bedrock_model_id             = null
+bedrock_max_tokens           = 3000
+
+cache_validity_min_age_days      = 7
+cache_validity_schedule_expression = "rate(1 day)"
+
+http_api_stage_name = "$default"
+
+cognito_jwt_issuer   = null
+cognito_jwt_audience = []
