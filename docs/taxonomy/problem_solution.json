@@ -1,0 +1,52 @@
+[
+  {
+    "entry_id": "problem-skincare-sensitive",
+    "term": "민감 피부",
+    "normalized_term": "민감 피부",
+    "allowed_categories": ["problem_solution"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "problem-skincare-dryness",
+    "term": "건조",
+    "normalized_term": "건조",
+    "allowed_categories": ["problem_solution"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "problem-skincare-barrier",
+    "term": "장벽",
+    "normalized_term": "장벽",
+    "allowed_categories": ["problem_solution"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "problem-skincare-firming",
+    "term": "탄력",
+    "normalized_term": "탄력",
+    "allowed_categories": ["problem_solution"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "problem-skincare-trouble",
+    "term": "트러블",
+    "normalized_term": "트러블",
+    "allowed_categories": ["problem_solution"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  }
+]

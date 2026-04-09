@@ -11,6 +11,7 @@ from src.handlers import (
 )
 from src.handlers import api as api_module
 from src.handlers import workers as workers_module
+from src.keyword_generation.models import GenerationResult, KeywordRow, ValidationReport
 from src.runtime import FixturePipeline, LocalPipelineRuntime, create_runtime_resources
 from src.runtime.service import load_runtime_resources_from_env
 
@@ -32,6 +33,58 @@ def _receive_sqs_event(sqs_client, queue_url: str) -> dict:
             for message in messages
         ]
     }
+
+
+def _successful_generation_result(request) -> GenerationResult:
+    raw_url = str(request.evidence_pack.get("raw_url") or request.evidence_pack.get("canonical_url") or "")
+    product_name = str(
+        request.evidence_pack.get("canonical_product_name")
+        or request.evidence_pack.get("product_name")
+        or "Example Product"
+    )
+    rows = [
+        KeywordRow(
+            url=raw_url,
+            product_name=product_name,
+            category="brand",
+            keyword=product_name,
+            naver_match="완전일치" if request.requested_platform_mode in {"naver_sa", "both"} else "",
+            google_match="exact" if request.requested_platform_mode in {"google_sa", "both"} else "",
+            reason="stubbed handler generation result",
+            quality_warning=False,
+        ),
+        KeywordRow(
+            url=raw_url,
+            product_name=product_name,
+            category="negative",
+            keyword="중고",
+            naver_match="제외키워드" if request.requested_platform_mode in {"naver_sa", "both"} else "",
+            google_match="negative" if request.requested_platform_mode in {"google_sa", "both"} else "",
+            reason="stubbed handler exclusion keyword",
+            quality_warning=False,
+        ),
+    ]
+    positive_counts = {}
+    category_counts = {}
+    weak_ratios = {}
+    for platform in (["naver_sa", "google_sa"] if request.requested_platform_mode == "both" else [request.requested_platform_mode]):
+        positive_counts[platform] = 100
+        category_counts[platform] = {"brand": 100}
+        weak_ratios[platform] = 0.0
+    return GenerationResult(
+        status="COMPLETED",
+        requested_platform_mode=request.requested_platform_mode,
+        rows=rows,
+        supplementation_attempts=0,
+        validation_report=ValidationReport(
+            status="COMPLETED",
+            requested_platform_mode=request.requested_platform_mode,
+            positive_keyword_counts=positive_counts,
+            category_counts=category_counts,
+            weak_tier_ratio_by_platform=weak_ratios,
+            quality_warning=False,
+        ),
+    )
 
 
 def test_submit_and_get_job_handlers_return_expected_payload(
@@ -57,7 +110,7 @@ def test_submit_and_get_job_handlers_return_expected_payload(
         resources=resources,
         resolver=FixturePipeline(
             fixture_loader=evidence_fixture_loader,
-            url_to_fixture={"https://example.com/laneige": "evidence_commerce_pdp_rich.json"},
+            url_to_fixture={"https://www.laneige.com/kr/product/skincare/water-sleeping-mask": "evidence_commerce_pdp_rich.json"},
         ).resolve,
     )
 
@@ -65,7 +118,7 @@ def test_submit_and_get_job_handlers_return_expected_payload(
         {
             "body": json.dumps(
                 {
-                    "urls": ["https://example.com/laneige"],
+                    "urls": ["https://www.laneige.com/kr/product/skincare/water-sleeping-mask"],
                     "requested_platform_mode": "both",
                     "notification_target": {"email": "ops@example.com"},
                 }
@@ -94,7 +147,9 @@ def test_worker_handlers_drive_job_to_terminal_state(
     dynamodb_client,
     sqs_client,
     evidence_fixture_loader,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _successful_generation_result)
     resources = create_runtime_resources(
         s3_client=s3_client,
         dynamodb_client=dynamodb_client,
@@ -113,7 +168,7 @@ def test_worker_handlers_drive_job_to_terminal_state(
         resolver=FixturePipeline(
             fixture_loader=evidence_fixture_loader,
             url_to_fixture={
-                "https://example.com/pass": "evidence_commerce_pdp_rich.json",
+                "https://www.laneige.com/kr/product/skincare/water-sleeping-mask": "evidence_commerce_pdp_rich.json",
                 "https://example.com/fail": {
                     "raw_url": "https://example.com/fail",
                     "canonical_url": "https://example.com/fail",
@@ -128,7 +183,7 @@ def test_worker_handlers_drive_job_to_terminal_state(
     submit_response = submit_job_handler(
         {
             "body": {
-                "urls": ["https://example.com/pass", "https://example.com/fail"],
+                "urls": ["https://www.laneige.com/kr/product/skincare/water-sleeping-mask", "https://example.com/fail"],
                 "requested_platform_mode": "both",
                 "notification_target": {"webhook": "https://example.com/hook"},
             }

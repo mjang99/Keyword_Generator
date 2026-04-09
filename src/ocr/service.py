@@ -24,15 +24,50 @@ SPEC_TOKENS = (
 )
 REJECT_IMAGE_TOKENS = ("logo", "icon", "sprite", "badge", "thumbnail", "favicon")
 PRIORITY_IMAGE_TOKENS = ("hero", "gallery", "detail", "spec", "product", "slide", "main")
+TABLE_IMAGE_TOKENS = (
+    "table",
+    "spec",
+    "specification",
+    "chart",
+    "grid",
+    "compare",
+    "comparison",
+    "matrix",
+    "guide",
+    "size",
+    "shade",
+    "swatch",
+)
+DETAIL_IMAGE_PATH_HINTS = (
+    "/web/upload/webp/",
+    "/web/upload/",
+    "/web/product/extra/",
+    "/editor/",
+    "/detail/",
+    "/content/",
+    "_detail",
+    "_result",
+)
+REJECT_IMAGE_EXTENSIONS = (".svg", ".gif", ".ico")
+REJECT_IMAGE_HOST_TOKENS = ("echosting.cafe24.com",)
+REJECT_IMAGE_PATH_TOKENS = (
+    "/web/upload/images/",
+    "/web/product/small/",
+    "header_scope",
+    "ico_",
+    "icn-",
+)
+REJECT_IMAGE_TEMPLATE_TOKENS = ("'+", "+'", "${", "{{", "}}")
 
 
 def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
     trigger_reasons = _trigger_reasons(snapshot)
     ranked_candidates = _rank_image_candidates(snapshot)
     source_blocks = list(snapshot.ocr_text_blocks or [])
+    image_results = _build_image_results(snapshot, ranked_candidates)
 
     if not trigger_reasons and not source_blocks:
-        return OcrDecision(status="SKIPPED", trigger_reasons=["ocr_not_required"])
+        return OcrDecision(status="SKIPPED", trigger_reasons=["ocr_not_required"], image_results=image_results)
 
     admitted_blocks: list[dict[str, Any]] = []
     rejected_blocks: list[dict[str, Any]] = []
@@ -50,9 +85,11 @@ def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
             ranked_image_candidates=ranked_candidates,
             rejected_blocks=[],
             contribution_chars=0,
+            image_results=image_results,
         )
 
     admitted_blocks.sort(key=lambda item: (-float(item.get("score", 0.0)), item.get("text", "")))
+    image_results = _apply_block_counts(image_results, admitted_blocks, rejected_blocks)
     return OcrDecision(
         status="AVAILABLE",
         trigger_reasons=trigger_reasons or ["fixture_ocr_blocks_present"],
@@ -60,6 +97,7 @@ def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
         admitted_blocks=admitted_blocks,
         rejected_blocks=rejected_blocks,
         contribution_chars=sum(len(str(block.get("text", ""))) for block in admitted_blocks),
+        image_results=image_results,
     )
 
 
@@ -75,6 +113,8 @@ def _trigger_reasons(snapshot: NormalizedPageSnapshot) -> list[str]:
         reasons.append("image_heavy_page")
     if _image_alt_suggests_text(snapshot):
         reasons.append("image_alt_product_text")
+    if _detail_image_candidate_present(snapshot):
+        reasons.append("detail_image_candidate")
     return _dedupe(reasons)
 
 
@@ -100,7 +140,17 @@ def _rank_image_candidates(snapshot: NormalizedPageSnapshot) -> list[dict[str, A
         alt = str(candidate.get("alt", ""))
         width = _int_value(candidate.get("width"))
         height = _int_value(candidate.get("height"))
-        rejected_reason = _reject_image_reason(src=src, alt=alt, width=width, height=height)
+        lower_src = src.lower()
+        lower_alt = alt.lower()
+        candidate_type = _candidate_type(lower_src, lower_alt)
+        rejected_reason = _reject_image_reason(
+            src=src,
+            alt=alt,
+            width=width,
+            height=height,
+            detail_hint=bool(candidate.get("detail_hint")),
+            candidate_type=candidate_type,
+        )
         if rejected_reason:
             continue
 
@@ -112,29 +162,137 @@ def _rank_image_candidates(snapshot: NormalizedPageSnapshot) -> list[dict[str, A
         else:
             score += 0.25
 
-        lower_src = src.lower()
-        lower_alt = alt.lower()
         if any(token in lower_src or token in lower_alt for token in PRIORITY_IMAGE_TOKENS):
             score += 0.35
+        if candidate.get("detail_hint") or any(token in lower_src for token in DETAIL_IMAGE_PATH_HINTS):
+            score += 1.4
+        if str(candidate.get("attribute", "")).lower() != "src":
+            score += 0.2
+        if lower_src.endswith(".webp"):
+            score += 0.15
 
         token_overlap = len(_matching_tokens(tokens, f"{lower_alt} {lower_src}"))
         score += min(token_overlap * 0.18, 0.72)
         score += max(0.0, 0.15 - index * 0.02)
 
         normalized["score"] = round(score, 4)
+        normalized["candidate_type"] = candidate_type
+        normalized["ocr_pipeline_type"] = "structured_table" if candidate_type == "table_like_image" else "plain_text"
         ranked.append(normalized)
 
     ranked.sort(key=lambda item: (-float(item["score"]), str(item.get("src", ""))))
-    return ranked[:8]
+    return ranked
 
 
-def _reject_image_reason(*, src: str, alt: str, width: int | None, height: int | None) -> str | None:
+def _reject_image_reason(
+    *,
+    src: str,
+    alt: str,
+    width: int | None,
+    height: int | None,
+    detail_hint: bool,
+    candidate_type: str,
+) -> str | None:
     lower = f"{src} {alt}".lower()
     if any(token in lower for token in REJECT_IMAGE_TOKENS):
         return "decorative_asset"
+    if any(token in lower for token in REJECT_IMAGE_TEMPLATE_TOKENS):
+        return "templated_asset_url"
+    if src.lower().endswith(REJECT_IMAGE_EXTENSIONS):
+        return "non_ocr_image_format"
+    if any(token in lower for token in REJECT_IMAGE_HOST_TOKENS):
+        return "remote_ui_asset"
+    if "/web/upload/images/" in src.lower() and candidate_type != "table_like_image":
+        return "decorative_path_asset"
+    if any(token in src.lower() for token in REJECT_IMAGE_PATH_TOKENS):
+        if candidate_type != "table_like_image" and not detail_hint:
+            return "decorative_path_asset"
     if width is not None and height is not None and (width < 300 or height < 300):
         return "below_min_dimensions"
+    if width is not None and height is None and width < 80:
+        return "below_min_known_dimension"
+    if height is not None and width is None and height < 80:
+        return "below_min_known_dimension"
     return None
+
+
+def _detail_image_candidate_present(snapshot: NormalizedPageSnapshot) -> bool:
+    for candidate in snapshot.image_candidates or []:
+        if candidate.get("detail_hint"):
+            return True
+        lower_src = str(candidate.get("src", "")).lower()
+        if any(token in lower_src for token in DETAIL_IMAGE_PATH_HINTS):
+            return True
+    return False
+
+
+def _candidate_type(lower_src: str, lower_alt: str) -> str:
+    combined = f"{lower_src} {lower_alt}"
+    if any(token in combined for token in TABLE_IMAGE_TOKENS):
+        return "table_like_image"
+    if len(re.findall(r"\b(?:[a-z]{1,3}\d+[a-z0-9]*|\d+[a-z]{1,3}[a-z0-9]*)\b", combined, re.IGNORECASE)) >= 2:
+        return "table_like_image"
+    return "general_detail_image"
+
+
+def _build_image_results(
+    snapshot: NormalizedPageSnapshot,
+    ranked_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    existing = {
+        str(item.get("image_src", "")): dict(item)
+        for item in (snapshot.ocr_image_results or [])
+        if str(item.get("image_src", "")).strip()
+    }
+    image_results: list[dict[str, Any]] = []
+    for candidate in ranked_candidates:
+        src = str(candidate.get("src", "")).strip()
+        if not src:
+            continue
+        result = existing.get(src, {})
+        image_results.append(
+            {
+                "image_src": src,
+                "image_attribute": result.get("image_attribute", candidate.get("attribute")),
+                "image_score": result.get("image_score", candidate.get("score")),
+                "candidate_type": result.get("candidate_type", candidate.get("candidate_type", "general_detail_image")),
+                "pipeline_type": result.get("pipeline_type", candidate.get("ocr_pipeline_type", "plain_text")),
+                "engine_used": result.get("engine_used"),
+                "status": result.get("status", "pending"),
+                "raw_block_count": int(result.get("raw_block_count", 0) or 0),
+                "raw_char_count": int(result.get("raw_char_count", 0) or 0),
+                "admitted_block_count": int(result.get("admitted_block_count", 0) or 0),
+                "rejected_block_count": int(result.get("rejected_block_count", 0) or 0),
+                "error": result.get("error"),
+            }
+        )
+    return image_results
+
+
+def _apply_block_counts(
+    image_results: list[dict[str, Any]],
+    admitted_blocks: list[dict[str, Any]],
+    rejected_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    admitted_by_src: dict[str, int] = {}
+    rejected_by_src: dict[str, int] = {}
+    for block in admitted_blocks:
+        src = str(block.get("image_src", "")).strip()
+        if src:
+            admitted_by_src[src] = admitted_by_src.get(src, 0) + 1
+    for block in rejected_blocks:
+        src = str(block.get("image_src", "")).strip()
+        if src:
+            rejected_by_src[src] = rejected_by_src.get(src, 0) + 1
+
+    normalized_results: list[dict[str, Any]] = []
+    for result in image_results:
+        updated = dict(result)
+        src = str(updated.get("image_src", "")).strip()
+        updated["admitted_block_count"] = admitted_by_src.get(src, 0)
+        updated["rejected_block_count"] = rejected_by_src.get(src, 0)
+        normalized_results.append(updated)
+    return normalized_results
 
 
 def _admit_block(block: dict[str, Any], snapshot: NormalizedPageSnapshot) -> tuple[bool, dict[str, Any]]:
@@ -158,12 +316,16 @@ def _admit_block(block: dict[str, Any], snapshot: NormalizedPageSnapshot) -> tup
 
     tokens = _token_set(snapshot)
     matched_tokens = _matching_tokens(tokens, text.lower())
-    has_minimum_content = len(text) >= 30 or len(matched_tokens) >= 2
+    has_minimum_content = (
+        len(text) >= 30
+        or len(matched_tokens) >= 2
+        or _should_preserve_short_image_block(text, matched_tokens, block)
+    )
     if not has_minimum_content:
         normalized["rejection_reason"] = "too_short_without_product_tokens"
         return False, normalized
 
-    if _contains_unrelated_product_names(text, matched_tokens, snapshot):
+    if _contains_unrelated_product_names(text, matched_tokens, snapshot, block):
         normalized["rejection_reason"] = "unrelated_product_names"
         return False, normalized
 
@@ -225,7 +387,14 @@ def _duplicate_of_html_text(text: str, decoded_text: str) -> bool:
     return len(normalized_text) >= 24 and normalized_text in normalized_html
 
 
-def _contains_unrelated_product_names(text: str, matched_tokens: list[str], snapshot: NormalizedPageSnapshot) -> bool:
+def _contains_unrelated_product_names(
+    text: str,
+    matched_tokens: list[str],
+    snapshot: NormalizedPageSnapshot,
+    block: dict[str, Any],
+) -> bool:
+    if block.get("source") == "image":
+        return False
     candidate_names = {
         token
         for token in re.findall(r"[A-Za-z][A-Za-z0-9.+-]{2,}", text)
@@ -234,6 +403,29 @@ def _contains_unrelated_product_names(text: str, matched_tokens: list[str], snap
     if matched_tokens:
         return False
     return len(candidate_names) >= 2
+
+
+def _should_preserve_short_image_block(
+    text: str,
+    matched_tokens: list[str],
+    block: dict[str, Any],
+) -> bool:
+    if block.get("source") != "image":
+        return False
+    if matched_tokens:
+        return True
+    alpha_terms = re.findall(r"[A-Za-z\uac00-\ud7a3]{4,}", text)
+    if len(alpha_terms) >= 2:
+        return True
+    if len(alpha_terms) == 1 and len(alpha_terms[0]) >= 8:
+        return True
+    if block.get("candidate_type") == "table_like_image" and re.search(
+        r"\b(?:[a-z]{1,3}\d+[a-z0-9]*|\d+[a-z]{1,3}[a-z0-9]*)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
 
 
 def _token_set(snapshot: NormalizedPageSnapshot) -> set[str]:

@@ -21,6 +21,8 @@ locals {
     BEDROCK_MODEL_ID                         = var.bedrock_model_id
     BEDROCK_MAX_TOKENS                       = tostring(var.bedrock_max_tokens)
     CACHE_VALIDITY_MIN_AGE_DAYS              = tostring(var.cache_validity_min_age_days)
+    PYTHONIOENCODING                         = "utf-8"
+    PYTHONUTF8                               = "1"
   }
 
   current_zip_functions = {

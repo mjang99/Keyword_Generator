@@ -73,6 +73,7 @@ def test_weak_tier_cap_20pct() -> None:
         rows,
         requested_platform_mode="both",
         quality_warning=True,
+        evidence_pack={"canonical_product_name": "Example Product", "product_name": "Example Product", "facts": []},
     )
     assert report.status == "FAILED_GENERATION"
     assert report.failure_code == "generation_category_shortfall" or report.failure_code == "generation_rule_violation"
@@ -96,3 +97,22 @@ def test_quality_warning_set_correctly(
         )
         assert result.rows
         assert {row.quality_warning for row in result.rows} == {expected_warning}
+
+
+def test_skincare_generation_avoids_placeholder_product_and_business_fallback_terms(
+    evidence_fixture_loader: Callable[[str], dict[str, Any]],
+) -> None:
+    fixture = deepcopy(evidence_fixture_loader("evidence_commerce_pdp_rich.json"))
+    result = generate_keywords(
+        GenerationRequest(
+            evidence_pack=fixture,
+            requested_platform_mode="both",
+        )
+    )
+
+    keywords = [row.keyword for row in result.rows if row.category != "negative"]
+
+    assert all("제품" not in keyword for keyword in keywords)
+    assert all("업무용" not in keyword for keyword in keywords)
+    assert all("기본형" not in keyword for keyword in keywords)
+    assert all("라인업" not in keyword for keyword in keywords)

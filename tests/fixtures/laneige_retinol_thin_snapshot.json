@@ -1,0 +1,70 @@
+{
+  "raw_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "canonical_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "page_class": "commerce_pdp",
+  "final_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "http_status": 200,
+  "content_type": "text/html",
+  "fetch_profile_used": "fixture_html",
+  "charset_selected": "utf-8",
+  "charset_confidence": 1.0,
+  "language_scores": {
+    "ko": 0.62,
+    "en": 0.38
+  },
+  "title": "Perfect Renew Retinol | Laneige Korea",
+  "meta_description": "Retinol cream for wrinkles and pores with 5D hyaluronic acid hydration.",
+  "decoded_text": "구매하기",
+  "visible_text_blocks": [
+    "구매하기"
+  ],
+  "buy_signals": [
+    "구매하기"
+  ],
+  "price_signals": [
+    "47000"
+  ],
+  "promo_signals": [],
+  "support_signals": [],
+  "download_signals": [],
+  "blocker_signals": [],
+  "waiting_signals": [],
+  "image_candidates": [],
+  "ocr_trigger_reasons": [],
+  "single_product_confidence": 0.72,
+  "sellability_confidence": 0.78,
+  "support_density": 0.0,
+  "download_density": 0.0,
+  "promo_density": 0.0,
+  "usable_text_chars": 4,
+  "product_name": "퍼펙트 리뉴 레티놀",
+  "locale_detected": "ko",
+  "market_locale": "ko",
+  "sellability_state": "sellable",
+  "stock_state": "Unknown",
+  "sufficiency_state": "sufficient",
+  "quality_warning": false,
+  "fallback_used": false,
+  "weak_backfill_used": false,
+  "facts": [],
+  "ocr_text_blocks": [],
+  "ocr_image_results": [],
+  "structured_data": [
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "퍼펙트 리뉴 레티놀",
+      "brand": {
+        "@type": "Thing",
+        "name": "Laneige"
+      },
+      "description": "Retinol cream for wrinkles and pores with 5D hyaluronic acid hydration.",
+      "offers": {
+        "@type": "Offer",
+        "price": "47000",
+        "priceCurrency": "KRW",
+        "url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html"
+      }
+    }
+  ]
+}

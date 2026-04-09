@@ -6,7 +6,7 @@ from typing import Any
 from src.keyword_generation import GenerationRequest, generate_keywords
 
 
-def test_supplementation_triggers_on_shortfall(
+def test_fallback_fails_fast_on_shortfall(
     evidence_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
     fixture = evidence_fixture_loader("evidence_borderline.json")
@@ -16,10 +16,10 @@ def test_supplementation_triggers_on_shortfall(
             requested_platform_mode="naver_sa",
         )
     )
-    assert result.status == "COMPLETED"
-    assert result.supplementation_attempts == 1
+    assert result.status == "FAILED_GENERATION"
+    assert result.supplementation_attempts == 0
     assert result.validation_report is not None
-    assert result.validation_report.positive_keyword_counts["naver_sa"] >= 100
+    assert result.validation_report.failure_code == "generation_count_shortfall"
 
 
 def test_no_second_supplementation(
@@ -34,6 +34,6 @@ def test_no_second_supplementation(
         )
     )
     assert result.status == "FAILED_GENERATION"
-    assert result.supplementation_attempts == 1
+    assert result.supplementation_attempts == 0
     assert result.validation_report is not None
     assert result.validation_report.failure_code == "generation_count_shortfall"

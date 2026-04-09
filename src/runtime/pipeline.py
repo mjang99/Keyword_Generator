@@ -7,7 +7,7 @@ from typing import Callable
 
 from src.collection import build_snapshot_from_fixture, classify_snapshot, collect_snapshot_from_html
 from src.evidence import build_evidence_pack
-from src.ocr import run_ocr_policy
+from src.ocr import OcrRunResult, OcrRunner, run_ocr_policy
 
 from .models import LocalResolvedFailure, LocalResolvedSuccess
 
@@ -52,6 +52,8 @@ class FixturePipeline:
 @dataclass(slots=True)
 class HtmlCollectionPipeline:
     fetcher: Callable[[str], Any] | Any
+    ocr_runner: OcrRunner | None = None
+    allow_ocr_for_unsupported: bool = False
 
     def resolve(self, raw_url: str) -> LocalResolvedSuccess | LocalResolvedFailure:
         try:
@@ -64,7 +66,7 @@ class HtmlCollectionPipeline:
 
         snapshot = collect_snapshot_from_html(fetch_result)
         classification = classify_snapshot(snapshot)
-        ocr_result = run_ocr_policy(snapshot)
+        ocr_result = self._resolve_ocr(snapshot, classification)
         if not classification.supported_for_generation:
             return LocalResolvedFailure(
                 failure_code=classification.failure_code_candidate or "unsupported_page",
@@ -81,3 +83,27 @@ class HtmlCollectionPipeline:
             classification=asdict(classification),
             ocr_result=asdict(ocr_result),
         )
+
+    def _resolve_ocr(self, snapshot, classification):
+        ocr_result = run_ocr_policy(snapshot)
+        if self.ocr_runner is None:
+            return ocr_result
+        if not classification.supported_for_generation and not self.allow_ocr_for_unsupported:
+            return ocr_result
+        if snapshot.ocr_text_blocks:
+            return ocr_result
+        if not ocr_result.ranked_image_candidates:
+            return ocr_result
+        if "ocr_not_required" in ocr_result.trigger_reasons:
+            return ocr_result
+
+        runner_output = self.ocr_runner.run(snapshot, ocr_result.ranked_image_candidates)
+        if isinstance(runner_output, OcrRunResult):
+            snapshot.ocr_text_blocks = list(runner_output.blocks)
+            snapshot.ocr_image_results = list(runner_output.image_results)
+        else:
+            snapshot.ocr_text_blocks = list(runner_output)
+            snapshot.ocr_image_results = []
+        if not snapshot.ocr_text_blocks:
+            return run_ocr_policy(snapshot)
+        return run_ocr_policy(snapshot)

@@ -1,0 +1,24 @@
+{
+  "case_id": "support_spec_fixture",
+  "source_path": "tests/fixtures/evidence_support_spec.json",
+  "requested_platform_mode": "both",
+  "notes": "Support/spec page remains quality-first. The case is expected to shortfall, but product identity should stay clean and unsupported purchase scaffolds should not appear.",
+  "platform_expectations": {
+    "naver_sa": {
+      "must_not_emit": [
+        "구매 전 체크",
+        "구매 준비",
+        "구매 상담",
+        "라인 비교"
+      ]
+    },
+    "google_sa": {
+      "must_not_emit": [
+        "구매 전 체크",
+        "구매 준비",
+        "구매 상담",
+        "라인 비교"
+      ]
+    }
+  }
+}

@@ -28,6 +28,7 @@ from src.exporting import (
 )
 from src.keyword_generation.models import GenerationRequest
 from src.keyword_generation.service import generate_keywords
+from src.ocr import create_subprocess_ocr_runner_from_env
 
 from .models import LocalResolvedFailure, LocalResolvedSuccess, RuntimeNotificationRecord
 from .pipeline import HtmlCollectionPipeline
@@ -121,6 +122,8 @@ def create_html_collection_runtime(
     sqs_client: Any,
     resources: RuntimeResources,
     fetcher: Any | None = None,
+    ocr_runner: Any | None = None,
+    allow_ocr_for_unsupported: bool = False,
     policy_version: str = "policy_v1",
     taxonomy_version: str = "tax_v2026_04_03",
     generator_version: str = "gen_v3",
@@ -130,7 +133,11 @@ def create_html_collection_runtime(
         dynamodb_client=dynamodb_client,
         sqs_client=sqs_client,
         resources=resources,
-        resolver=HtmlCollectionPipeline(fetcher=fetcher or HttpPageFetcher()).resolve,
+        resolver=HtmlCollectionPipeline(
+            fetcher=fetcher or HttpPageFetcher(),
+            ocr_runner=ocr_runner,
+            allow_ocr_for_unsupported=allow_ocr_for_unsupported,
+        ).resolve,
         policy_version=policy_version,
         taxonomy_version=taxonomy_version,
         generator_version=generator_version,
@@ -140,6 +147,7 @@ def create_html_collection_runtime(
 def create_html_collection_runtime_from_env(
     *,
     fetcher: Any | None = None,
+    ocr_runner: Any | None = None,
     region_name: str | None = None,
 ) -> "LocalPipelineRuntime":
     resolved_region = region_name or os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
@@ -152,6 +160,9 @@ def create_html_collection_runtime_from_env(
         sqs_client=sqs_client,
         resources=load_runtime_resources_from_env(),
         fetcher=fetcher,
+        ocr_runner=ocr_runner or create_subprocess_ocr_runner_from_env(),
+        allow_ocr_for_unsupported=os.environ.get("KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         policy_version=os.environ.get("KEYWORD_GENERATOR_POLICY_VERSION", "policy_v1"),
         taxonomy_version=os.environ.get("KEYWORD_GENERATOR_TAXONOMY_VERSION", "tax_v2026_04_03"),
         generator_version=os.environ.get("KEYWORD_GENERATOR_GENERATOR_VERSION", "gen_v3"),
@@ -598,6 +609,16 @@ class LocalPipelineRuntime:
             failure_detail=generation_result.validation_report.failure_detail or "generation failed",
             quality_warning=generation_result.validation_report.quality_warning,
         )
+        failed_result = UrlExportResult(
+            url_task_id=url_task_id,
+            raw_url=raw_url,
+            page_class=failure.page_class or "",
+            requested_platform_mode=generation_platform,
+            generation_result=generation_result,
+            cache_hit=False,
+        )
+        result_key = self._job_result_key(job_id, url_task_id)
+        self._write_json(result_key, build_per_url_json_payload(failed_result))
         failure_key = self._job_failure_key(job_id, url_task_id)
         self._write_json(failure_key, asdict(failure))
         self._put_item(
@@ -618,6 +639,7 @@ class LocalPipelineRuntime:
                 if resolved.ocr_result is not None
                 else None,
                 "evidence_s3_key": self._job_evidence_key(job_id, url_task_id),
+                "result_s3_key": result_key,
                 "failure_s3_key": failure_key,
             }
         )
@@ -662,11 +684,12 @@ class LocalPipelineRuntime:
                 continue
 
             payload = self._read_json(task["failure_s3_key"])
+            failure_artifact_key = task.get("result_s3_key") or task["failure_s3_key"]
             manifest_entries.append(
                 {
                     "url_task_id": task["url_task_id"],
                     "status": task["status"],
-                    "artifact": self._s3_uri(task["failure_s3_key"]),
+                    "artifact": self._s3_uri(failure_artifact_key),
                 }
             )
             failures.append(UrlFailureResult(**payload))
@@ -1051,6 +1074,7 @@ def _generation_result_from_payload(payload: dict[str, Any]) -> Any:
         requested_platform_mode=payload["requested_platform_mode"],
         rows=[KeywordRow(**row) for row in payload["rows"]],
         supplementation_attempts=0,
+        debug_payload=payload.get("debug") or {},
         validation_report=ValidationReport(
             status=report["status"],
             requested_platform_mode=payload["requested_platform_mode"],

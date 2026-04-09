@@ -1,0 +1,62 @@
+[
+  {
+    "entry_id": "season-skincare-night",
+    "term": "야간 케어",
+    "normalized_term": "야간 케어",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "season-skincare-daily",
+    "term": "데일리 루틴",
+    "normalized_term": "데일리 루틴",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "season-skincare-dry",
+    "term": "건조한 날씨",
+    "normalized_term": "건조한 날씨",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "season-skincare-winter",
+    "term": "겨울 보습",
+    "normalized_term": "겨울 보습",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "season-general-entry",
+    "term": "입문용",
+    "normalized_term": "입문용",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "season-general-daily",
+    "term": "일상용",
+    "normalized_term": "일상용",
+    "allowed_categories": ["season_event"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  }
+]

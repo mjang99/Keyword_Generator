@@ -1,0 +1,42 @@
+[
+  {
+    "entry_id": "comp-general-alt",
+    "term": "대안",
+    "normalized_term": "대안",
+    "allowed_categories": ["competitor_comparison"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "comp-general-substitute",
+    "term": "대체",
+    "normalized_term": "대체",
+    "allowed_categories": ["competitor_comparison"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "comp-general-option",
+    "term": "옵션 비교",
+    "normalized_term": "옵션 비교",
+    "allowed_categories": ["competitor_comparison"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "comp-general-line",
+    "term": "라인 비교",
+    "normalized_term": "라인 비교",
+    "allowed_categories": ["competitor_comparison"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  }
+]

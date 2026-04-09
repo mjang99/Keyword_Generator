@@ -1,0 +1,77 @@
+{
+  "raw_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "canonical_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "page_class": "commerce_pdp",
+  "final_url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html",
+  "http_status": 200,
+  "content_type": "text/html",
+  "fetch_profile_used": "fixture_html",
+  "charset_selected": "utf-8",
+  "charset_confidence": 1.0,
+  "language_scores": {
+    "ko": 0.78,
+    "en": 0.22
+  },
+  "title": "퍼펙트 리뉴 레티놀 | 라네즈 코리아",
+  "meta_description": "95% 순수 레티놀과 레티놀 부스터가 주름과 모공 탄력을 개선하고 5D 히알루론산이 보습을 채워주는 레티놀 크림.",
+  "decoded_text": "퍼펙트 리뉴 레티놀\n구매하기\n15ml / 30ml\n47,000원 / 75,000원\n95% 순수 레티놀과 레티놀 부스터로 주름과 모공 탄력 개선\n5D 히알루론산으로 속보습 케어\n레티놀 크림 for face\n리뷰 4.7 / 5.0\n라네즈 스킨케어 레티놀",
+  "visible_text_blocks": [
+    "퍼펙트 리뉴 레티놀 | 라네즈 코리아",
+    "구매하기",
+    "15ml / 30ml",
+    "47,000원 / 75,000원",
+    "95% 순수 레티놀과 레티놀 부스터로 주름과 모공 탄력 개선",
+    "5D 히알루론산으로 속보습 케어",
+    "레티놀 크림 for face"
+  ],
+  "buy_signals": [
+    "구매하기"
+  ],
+  "price_signals": [
+    "47000",
+    "75000"
+  ],
+  "promo_signals": [],
+  "support_signals": [],
+  "download_signals": [],
+  "blocker_signals": [],
+  "waiting_signals": [],
+  "image_candidates": [],
+  "ocr_trigger_reasons": [],
+  "single_product_confidence": 0.88,
+  "sellability_confidence": 0.84,
+  "support_density": 0.0,
+  "download_density": 0.0,
+  "promo_density": 0.0,
+  "usable_text_chars": 230,
+  "product_name": "퍼펙트 리뉴 레티놀",
+  "locale_detected": "ko",
+  "market_locale": "ko",
+  "sellability_state": "sellable",
+  "stock_state": "Unknown",
+  "sufficiency_state": "sufficient",
+  "quality_warning": false,
+  "fallback_used": false,
+  "weak_backfill_used": false,
+  "facts": [],
+  "ocr_text_blocks": [],
+  "ocr_image_results": [],
+  "structured_data": [
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "퍼펙트 리뉴 레티놀",
+      "brand": {
+        "@type": "Thing",
+        "name": "Laneige"
+      },
+      "description": "95% 순수 레티놀과 레티놀 부스터가 주름과 모공 탄력을 개선하고 5D 히알루론산이 보습을 채워주는 레티놀 크림.",
+      "offers": {
+        "@type": "Offer",
+        "price": "47000",
+        "priceCurrency": "KRW",
+        "url": "https://www.laneige.com/kr/ko/skincare/perfect-renew-retinol.html"
+      }
+    }
+  ]
+}

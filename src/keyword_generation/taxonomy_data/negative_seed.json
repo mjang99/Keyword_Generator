@@ -1,0 +1,102 @@
+[
+  {
+    "entry_id": "neg-skincare-used",
+    "term": "중고",
+    "normalized_term": "중고",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare", "footwear", "audio", "electronics", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-sample",
+    "term": "샘플",
+    "normalized_term": "샘플",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-bulk",
+    "term": "도매",
+    "normalized_term": "도매",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-bottle",
+    "term": "공병",
+    "normalized_term": "공병",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-ingredient",
+    "term": "원료",
+    "normalized_term": "원료",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-diy",
+    "term": "만들기",
+    "normalized_term": "만들기",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-resell",
+    "term": "재판매",
+    "normalized_term": "재판매",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare", "general"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-skincare-oem",
+    "term": "OEM",
+    "normalized_term": "oem",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["skincare"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-electronics-refurb",
+    "term": "리퍼",
+    "normalized_term": "리퍼",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["electronics", "audio"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  },
+  {
+    "entry_id": "neg-electronics-repair",
+    "term": "수리",
+    "normalized_term": "수리",
+    "allowed_categories": ["negative"],
+    "allowed_product_types": ["electronics", "audio"],
+    "required_anchor_tags": [],
+    "max_evidence_tier": "inferred",
+    "risk_flags": []
+  }
+]

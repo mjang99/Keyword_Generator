@@ -13,6 +13,7 @@ class KeywordRow:
     product_name: str
     category: str
     keyword: str
+    slot_type: str | None = None
     naver_match: str = ""
     google_match: str = ""
     reason: str = ""
@@ -28,12 +29,21 @@ class PlatformRender:
 
 
 @dataclass(slots=True)
+class SharedRender:
+    keyword: str
+    admitted: bool = True
+
+
+@dataclass(slots=True)
 class CanonicalIntent:
     category: str
     reason: str
+    slot_type: str = ""
     evidence_tier: str | None = None
     intent_text: str = ""
+    intent_id: str = ""
     allowed_platforms: list[PlatformMode] = field(default_factory=list)
+    shared_render: SharedRender | None = None
     naver_render: PlatformRender | None = None
     google_render: PlatformRender | None = None
 
@@ -45,7 +55,7 @@ class GenerationRequest:
     max_keywords_per_platform: int = 100
     # initial_generation_target: over-generate to absorb semantic dedup loss
     initial_generation_target: int = 130
-    supplementation_pass_limit: int = 1
+    supplementation_pass_limit: int = 2
 
     @property
     def repair_pass_limit(self) -> int:
@@ -57,6 +67,17 @@ class GenerationRequest:
 
 
 @dataclass(slots=True)
+class SlotPlanItem:
+    category: str
+    slot_type: str
+    target_count: int
+    required: bool = False
+    seed_phrases: list[str] = field(default_factory=list)
+    allowed_shapes: list[str] = field(default_factory=list)
+    forbidden_shapes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class DedupQualityReport:
     """Output of Bedrock dedup+quality pass (step B in LLM pipeline)."""
 
@@ -64,8 +85,12 @@ class DedupQualityReport:
     surviving_keywords: list[CanonicalIntent] = field(default_factory=list)
     dropped_duplicates: list[dict] = field(default_factory=list)
     dropped_low_quality: list[dict] = field(default_factory=list)
-    # gap_report: {category: missing_count, "_total": N}
-    gap_report: dict[str, int] = field(default_factory=dict)
+    # slot_gap_report: {"category:slot_type": missing_count, "_total": N}
+    slot_gap_report: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def gap_report(self) -> dict[str, int]:
+        return self.slot_gap_report
 
 
 @dataclass(slots=True)
@@ -88,6 +113,7 @@ class GenerationResult:
     intents: list[CanonicalIntent] = field(default_factory=list)
     supplementation_attempts: int = 0
     validation_report: ValidationReport | None = None
+    debug_payload: dict[str, Any] = field(default_factory=dict)
 
     @property
     def repair_attempts(self) -> int:

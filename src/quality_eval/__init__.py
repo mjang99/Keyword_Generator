@@ -15,6 +15,15 @@ from .deployed import (
     load_combined_payload_from_job,
     load_json_from_source,
 )
+from .golden import (
+    GoldenPlatformExpectation,
+    GoldenPlatformResult,
+    GoldenSetCase,
+    GoldenSetEvaluation,
+    evaluate_golden_set,
+    load_golden_set_case,
+    load_golden_source_payload,
+)
 
 __all__ = [
     "EvaluationGate",
@@ -26,8 +35,15 @@ __all__ = [
     "build_job_input_from_combined_payload",
     "compute_auto_scores",
     "evaluate_job_input",
+    "evaluate_golden_set",
     "evaluate_per_url_input",
     "fetch_job_status",
+    "GoldenPlatformExpectation",
+    "GoldenPlatformResult",
+    "GoldenSetCase",
+    "GoldenSetEvaluation",
     "load_combined_payload_from_job",
+    "load_golden_set_case",
+    "load_golden_source_payload",
     "load_json_from_source",
 ]

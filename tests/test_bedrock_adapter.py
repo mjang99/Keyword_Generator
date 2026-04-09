@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.keyword_generation.bedrock_adapter import (
+    BedrockResponseParseError,
     build_dedup_quality_prompt,
     build_keyword_generation_prompt,
     build_supplementation_prompt,
@@ -18,10 +19,11 @@ from src.keyword_generation.service import generate_keywords
 def _request() -> GenerationRequest:
     return GenerationRequest(
         evidence_pack={
-            "raw_url": "https://example.com/laneige",
-            "canonical_url": "https://example.com/laneige",
+            "raw_url": "https://example.com/apple-pencil",
+            "canonical_url": "https://example.com/apple-pencil",
             "page_class": "commerce_pdp",
-            "product_name": "라네즈 워터 슬리핑 마스크",
+            "product_name": "Apple Pencil",
+            "canonical_product_name": "Apple Pencil",
             "locale_detected": "ko",
             "market_locale": "ko_KR",
             "sellability_state": "sellable",
@@ -32,15 +34,27 @@ def _request() -> GenerationRequest:
                 {
                     "fact_id": "f001",
                     "type": "brand",
-                    "value": "라네즈",
-                    "normalized_value": "라네즈",
+                    "value": "Apple",
+                    "normalized_value": "Apple",
                     "source": "title",
-                    "source_uri": "https://example.com/laneige",
+                    "source_uri": "https://example.com/apple-pencil",
                     "page_scope": "exact",
                     "evidence_tier": "direct",
                     "admissibility_tags": ["product_identity"],
                     "confidence": 0.99,
-                }
+                },
+                {
+                    "fact_id": "f002",
+                    "type": "product_category",
+                    "value": "stylus pen",
+                    "normalized_value": "stylus pen",
+                    "source": "title",
+                    "source_uri": "https://example.com/apple-pencil",
+                    "page_scope": "exact",
+                    "evidence_tier": "direct",
+                    "admissibility_tags": ["product_identity"],
+                    "confidence": 0.95,
+                },
             ],
         },
         requested_platform_mode="naver_sa",
@@ -52,19 +66,30 @@ def test_build_keyword_generation_prompt_contains_locked_fields() -> None:
 
     assert "generation_instructions=" in prompt
     assert "evidence_pack=" in prompt
-    assert "라네즈 워터 슬리핑 마스크" in prompt
+    assert "interpretation" in prompt
+    assert "canonical_category" in prompt
+    assert "comparison_policy" in prompt
+    assert "competitor_brand_hints" in prompt
+    assert "require_competitor_brand" in prompt
+    assert "required_positive_categories" in prompt
+    assert "negative_category_required" in prompt
+    assert "positive_category_targets" in prompt
+    assert "slot_plan" in prompt
+    assert '"items"' in prompt
+    assert '"keyword"' in prompt
     assert "quality_warning" in prompt
 
 
 def test_parse_keyword_response_returns_keyword_rows() -> None:
     rows = parse_keyword_response(
-        '{"rows":[{"category":"brand","keyword":"라네즈 워터 슬리핑 마스크","reason":"direct fact","evidence_tier":"direct","naver_match":"완전일치"}]}',
+        '{"rows":[{"category":"brand","slot_type":"product_name","keyword":"Apple Pencil","reason":"direct fact","evidence_tier":"direct","naver_match":"완전일치"}]}',
         request=_request(),
     )
 
     assert len(rows) == 1
     assert rows[0].category == "brand"
-    assert rows[0].keyword == "라네즈 워터 슬리핑 마스크"
+    assert rows[0].slot_type == "product_name"
+    assert rows[0].keyword == "Apple Pencil"
     assert rows[0].naver_match == "완전일치"
 
 
@@ -75,9 +100,7 @@ def test_generate_rows_via_bedrock_uses_fake_client() -> None:
                 "output": {
                     "message": {
                         "content": [
-                            {
-                                "text": '{"rows":[{"category":"brand","keyword":"라네즈 워터 슬리핑 마스크","reason":"direct fact","evidence_tier":"direct","naver_match":"완전일치"}]}'
-                            }
+                            {"text": '{"items":[{"category":"brand","keyword":"Apple Pencil"}]}'}
                         ]
                     }
                 }
@@ -86,26 +109,55 @@ def test_generate_rows_via_bedrock_uses_fake_client() -> None:
     rows = generate_rows_via_bedrock(_request(), positive_target=100, client=FakeClient())
 
     assert len(rows) == 1
-    assert rows[0].keyword == "라네즈 워터 슬리핑 마스크"
+    assert rows[0].slot_type == "product_name"
+    assert rows[0].keyword == "Apple Pencil"
+    assert rows[0].reason == "브랜드 및 제품명 직접 근거 기반"
 
 
-def test_generate_keywords_falls_back_when_bedrock_rows_are_invalid(monkeypatch) -> None:
+def test_generate_keywords_returns_failure_when_bedrock_pipeline_errors(monkeypatch) -> None:
     monkeypatch.setenv("KEYWORD_GENERATOR_GENERATION_MODE", "bedrock")
     monkeypatch.setattr(
         "src.keyword_generation.service.generate_intents_via_bedrock",
-        lambda request, positive_target: [],
+        lambda request, positive_target, positive_category_targets=None, **kwargs: (_ for _ in ()).throw(RuntimeError("bedrock down")),
     )
 
     result = generate_keywords(_request())
 
-    assert result.status == "COMPLETED"
+    assert result.status == "FAILED_GENERATION"
     assert result.validation_report is not None
-    assert result.validation_report.positive_keyword_counts["naver_sa"] >= 100
+    assert result.validation_report.failure_code == "generation_rule_violation"
+    assert "bedrock_pipeline_error" in (result.validation_report.failure_detail or "")
 
 
-def _sample_intent(keyword: str = "라네즈 워터 슬리핑 마스크", category: str = "brand") -> CanonicalIntent:
+def test_generate_keywords_preserves_bedrock_parse_failure_debug(monkeypatch) -> None:
+    monkeypatch.setenv("KEYWORD_GENERATOR_GENERATION_MODE", "bedrock")
+
+    def raise_parse_error(request, positive_target, positive_category_targets=None, **kwargs):
+        del request, positive_target, positive_category_targets, kwargs
+        raise BedrockResponseParseError(
+            stage="generation",
+            message="Bedrock response must include items[] or intents[] or rows[]",
+            model_id="fake-model",
+            response_text='{"oops":"shape"}',
+            metadata={"stop_reason": "end_turn", "usage": {"outputTokens": 12}},
+        )
+
+    monkeypatch.setattr("src.keyword_generation.service.generate_intents_via_bedrock", raise_parse_error)
+
+    result = generate_keywords(_request())
+
+    assert result.status == "FAILED_GENERATION"
+    assert result.validation_report is not None
+    assert result.validation_report.failure_code == "generation_rule_violation"
+    assert result.debug_payload["generation"]["error"]["stage"] == "generation"
+    assert result.debug_payload["generation"]["error"]["model_id"] == "fake-model"
+    assert result.debug_payload["generation"]["error"]["response_text"] == '{"oops":"shape"}'
+
+
+def _sample_intent(keyword: str = "Apple Pencil", category: str = "brand") -> CanonicalIntent:
     return CanonicalIntent(
         category=category,
+        slot_type="product_name",
         intent_text=keyword,
         reason="direct fact",
         evidence_tier="direct",
@@ -126,32 +178,73 @@ def test_build_dedup_quality_prompt_contains_required_fields() -> None:
 
     assert "dedup_quality_instructions=" in prompt
     assert "candidates=" in prompt
-    assert "라네즈 워터 슬리핑 마스크" in prompt
+    assert "Apple Pencil" in prompt
     assert "dedup_rules" in prompt
     assert "quality_rules" in prompt
-    assert "gap_report" in prompt
+    assert "slot_gap_report" in prompt
+    assert "required_positive_categories" in prompt
+    assert "negative_category_required" in prompt
 
 
 def test_build_supplementation_prompt_contains_gap_and_evidence() -> None:
-    gap_report = {"brand": 3, "long_tail": 5, "_total": 8}
+    gap_slots = {"brand:product_name": 3, "long_tail:use_case_phrase": 5, "_total": 8}
     evidence_pack = {
-        "raw_url": "https://example.com/laneige",
-        "product_name": "라네즈 워터 슬리핑 마스크",
+        "raw_url": "https://example.com/apple-pencil",
+        "product_name": "Apple Pencil",
         "page_class": "commerce_pdp",
     }
-    surviving = [{"intent_text": "라네즈 워터 슬리핑 마스크", "category": "brand"}]
+    surviving = [{"intent_text": "Apple Pencil", "category": "brand", "slot_type": "product_name"}]
     prompt = build_supplementation_prompt(
-        gap_report,
+        gap_slots,
         evidence_pack,
         platform_mode="naver_sa",
         surviving_summary=surviving,
     )
 
     assert "supplementation_instructions=" in prompt
-    assert "gap_categories" in prompt
-    assert "total_missing" in prompt
+    assert "gap_slots" in prompt
+    assert "total_missing_slots" in prompt
+    assert "slot_plan" in prompt
+    assert "expansion_axes" in prompt
+    assert "already_overused_terms" in prompt
+    assert "surface_cleanup_policy" in prompt
+    assert "interpretation" in prompt
+    assert "canonical_category" in prompt
+    assert "supplementation_prohibitions" in prompt
     assert "already_surviving_sample" in prompt
-    assert "라네즈 워터 슬리핑 마스크" in prompt
+    assert "Apple Pencil" in prompt
+
+
+def test_build_supplementation_prompt_includes_overused_terms_hint() -> None:
+    gap_slots = {"long_tail:use_case_phrase": 4, "_total": 4}
+    evidence_pack = {
+        "raw_url": "https://example.com/laneige",
+        "product_name": "Laneige Cream Skin",
+        "canonical_product_name": "Laneige Cream Skin",
+        "facts": [
+            {
+                "type": "brand",
+                "value": "Laneige",
+                "normalized_value": "Laneige",
+                "admissibility_tags": ["product_identity"],
+            }
+        ],
+    }
+    surviving = [
+        {"intent_text": "cream skin hydration toner", "category": "feature_attribute", "slot_type": "core_attribute"},
+        {"intent_text": "cream skin hydration serum", "category": "feature_attribute", "slot_type": "core_attribute"},
+        {"intent_text": "cream skin hydration routine", "category": "long_tail", "slot_type": "use_case_phrase"},
+    ]
+
+    prompt = build_supplementation_prompt(
+        gap_slots,
+        evidence_pack,
+        platform_mode="google_sa",
+        surviving_summary=surviving,
+    )
+
+    assert "already_overused_terms" in prompt
+    assert "hydration" in prompt
 
 
 def test_run_dedup_quality_pass_returns_report_with_fake_client() -> None:
@@ -163,11 +256,8 @@ def test_run_dedup_quality_pass_returns_report_with_fake_client() -> None:
                         "content": [
                             {
                                 "text": (
-                                    '{"surviving":[{"intent_text":"라네즈 워터 슬리핑 마스크",'
-                                    '"category":"brand","evidence_tier":"direct",'
-                                    '"quality_score":"high","quality_reason":"exact brand name","keep":true}],'
-                                    '"dropped_duplicates":[],"dropped_low_quality":[],'
-                                    '"gap_report":{"_total":0}}'
+                                    '{"surviving":[{"intent_id":"brand-1","keyword":"Apple Pencil","category":"brand","quality_score":"high","quality_reason":"exact brand name","keep":true}],'
+                                    '"dropped_duplicates":[],"dropped_low_quality":[],"slot_gap_report":{"_total":0}}'
                                 )
                             }
                         ]
@@ -175,7 +265,18 @@ def test_run_dedup_quality_pass_returns_report_with_fake_client() -> None:
                 }
             }
 
-    candidates = [_sample_intent()]
+    candidates = [
+        CanonicalIntent(
+            category="brand",
+            slot_type="product_name",
+            intent_text="Apple Pencil",
+            intent_id="brand-1",
+            reason="direct fact",
+            evidence_tier="direct",
+            allowed_platforms=["naver_sa"],
+            naver_render=PlatformRender(keyword="Apple Pencil", match_label="완전일치"),
+        )
+    ]
     report = run_dedup_quality_pass(
         candidates,
         request=_request(),
@@ -198,39 +299,91 @@ def test_run_supplementation_pass_returns_intents_with_fake_client() -> None:
                 "output": {
                     "message": {
                         "content": [
-                            {
-                                "text": (
-                                    '{"intents":[{"category":"brand","intent_text":"라네즈 슬리핑 마스크 추천",'
-                                    '"reason":"gap fill","evidence_tier":"inferred",'
-                                    '"allowed_platforms":["naver_sa"],'
-                                    '"naver_render":{"keyword":"라네즈 슬리핑 마스크 추천","match_label":"완전일치","admitted":true},'
-                                    '"google_render":null}]}'
-                                )
-                            }
+                            {"text": '{"items":[{"category":"brand","keyword":"Apple Pencil Pro"}]}'}
                         ]
                     }
                 }
             }
 
-    gap_report = {"brand": 2, "_total": 2}
+    gap_slots = {"brand:product_name": 2, "_total": 2}
     intents = run_supplementation_pass(
-        gap_report,
+        gap_slots,
         request=_request(),
         platform="naver_sa",
-        surviving_summary=[{"intent_text": "라네즈 워터 슬리핑 마스크", "category": "brand"}],
+        surviving_summary=[{"intent_text": "Apple Pencil", "category": "brand", "slot_type": "product_name"}],
         client=FakeClient(),
     )
 
     assert len(intents) == 1
-    assert intents[0].intent_text == "라네즈 슬리핑 마스크 추천"
+    assert intents[0].intent_text == "Apple Pencil Pro"
+    assert intents[0].slot_type == "product_name"
+    assert intents[0].reason == ""
 
 
 def test_parse_intent_response_accepts_canonical_intents() -> None:
     intents = parse_intent_response(
-        '{"intents":[{"category":"brand","intent_text":"example product","reason":"direct fact","evidence_tier":"direct","allowed_platforms":["naver_sa","google_sa"],"naver_render":{"keyword":"example product","match_label":"?꾩쟾?쇱튂","admitted":true},"google_render":{"keyword":"example product","match_label":"exact","admitted":true}}]}',
+        '{"intents":[{"category":"brand","slot_type":"product_name","intent_text":"example product","reason":"direct fact","evidence_tier":"direct","allowed_platforms":["naver_sa","google_sa"],"naver_render":{"keyword":"example product","match_label":"완전일치","admitted":true},"google_render":{"keyword":"example product","match_label":"exact","admitted":true}}]}',
         request=_request(),
     )
 
     assert len(intents) == 1
+    assert intents[0].slot_type == "product_name"
     assert intents[0].naver_render is not None
     assert intents[0].google_render is not None
+
+
+def test_parse_intent_response_defaults_slot_type_for_legacy_rows() -> None:
+    intents = parse_intent_response(
+        '{"rows":[{"category":"brand","keyword":"Apple Pencil","reason":"direct fact","evidence_tier":"direct","naver_match":"exact"}]}',
+        request=_request(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].category == "brand"
+    assert intents[0].slot_type == "product_name"
+
+
+def test_parse_intent_response_accepts_lightweight_items() -> None:
+    intents = parse_intent_response(
+        '{"items":[{"category":"feature_attribute","keyword":"Apple Pencil 1세대"}]}',
+        request=_request(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].category == "feature_attribute"
+    assert intents[0].slot_type == "spec"
+    assert intents[0].intent_text == "Apple Pencil 1세대"
+
+
+def test_parse_intent_response_unwraps_fenced_wrapper_payload() -> None:
+    intents = parse_intent_response(
+        '```json\n{"result":{"items":[{"category":"brand","keyword":"Apple Pencil"}]}}\n```',
+        request=_request(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].category == "brand"
+    assert intents[0].intent_text == "Apple Pencil"
+
+
+def test_parse_intent_response_accepts_lightweight_keywords_array() -> None:
+    intents = parse_intent_response(
+        '{"keywords":[{"category":"purchase_intent","keyword":"Apple Pencil 1"}]}',
+        request=_request(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].category == "purchase_intent"
+    assert intents[0].slot_type == "navigational_alias"
+    assert intents[0].intent_text == "Apple Pencil 1"
+
+
+def test_parse_intent_response_unwraps_nested_keywords_payload() -> None:
+    intents = parse_intent_response(
+        '{"result":{"keywords":[{"category":"brand","keyword":"Apple Pencil"}]}}',
+        request=_request(),
+    )
+
+    assert len(intents) == 1
+    assert intents[0].category == "brand"
+    assert intents[0].intent_text == "Apple Pencil"

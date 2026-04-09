@@ -8,6 +8,9 @@ from typing import Any, Callable, Iterator
 import boto3
 import pytest
 from moto import mock_aws
+from botocore.exceptions import ProfileNotFound
+
+from src.clients.bedrock import BedrockRuntimeSettings, converse_text
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-2")
 
@@ -35,8 +38,9 @@ def fixtures_dir() -> Path:
 @pytest.fixture(scope="function", autouse=True)
 def aws_default_region_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-2")
-    monkeypatch.delenv("AWS_PROFILE", raising=False)
-    monkeypatch.delenv("AWS_DEFAULT_PROFILE", raising=False)
+    if os.environ.get("RUN_LIVE_BEDROCK_TESTS", "").strip() != "1":
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_PROFILE", raising=False)
     yield
 
 
@@ -67,3 +71,31 @@ def bedrock_client() -> Any:
         "bedrock-runtime",
         region_name=os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2"),
     )
+
+
+@pytest.fixture(scope="session")
+def live_bedrock_guard() -> BedrockRuntimeSettings:
+    if os.environ.get("RUN_LIVE_BEDROCK_TESTS", "").strip() != "1":
+        pytest.skip("live Bedrock tests are disabled; set RUN_LIVE_BEDROCK_TESTS=1")
+
+    try:
+        credentials = boto3.Session().get_credentials()
+    except ProfileNotFound as exc:
+        pytest.skip(f"live Bedrock environment unavailable: {type(exc).__name__}: {exc}")
+    if credentials is None:
+        pytest.skip("live Bedrock tests require AWS credentials")
+
+    settings = BedrockRuntimeSettings.from_env()
+    try:
+        _, response_text = converse_text(
+            "Reply with exactly: OK",
+            settings=settings,
+            system_prompt="You are a connectivity check. Reply with exactly: OK",
+        )
+    except Exception as exc:
+        pytest.skip(f"live Bedrock environment unavailable: {type(exc).__name__}: {exc}")
+
+    if "OK" not in response_text.upper():
+        pytest.skip(f"unexpected live Bedrock probe response: {response_text!r}")
+
+    return settings

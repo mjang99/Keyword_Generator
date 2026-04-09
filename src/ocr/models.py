@@ -7,6 +7,12 @@ OcrStatus = Literal["SKIPPED", "AVAILABLE"]
 
 
 @dataclass(slots=True)
+class OcrRunResult:
+    blocks: list[dict[str, Any]] = field(default_factory=list)
+    image_results: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class OcrDecision:
     status: OcrStatus
     trigger_reasons: list[str] = field(default_factory=list)
@@ -14,3 +20,4 @@ class OcrDecision:
     admitted_blocks: list[dict[str, Any]] = field(default_factory=list)
     rejected_blocks: list[dict[str, Any]] = field(default_factory=list)
     contribution_chars: int = 0
+    image_results: list[dict[str, Any]] = field(default_factory=list)

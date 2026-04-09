@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.collection import FixtureHtmlFetcher
 from src.exporting import NotificationTarget
+from src.keyword_generation.models import GenerationResult, KeywordRow, ValidationReport
 from src.runtime import (
     FixturePipeline,
     create_html_collection_runtime,
@@ -36,13 +37,109 @@ def _runtime_with_mapping(
     )
 
 
+def _successful_generation_result(request) -> GenerationResult:
+    raw_url = str(request.evidence_pack.get("raw_url") or request.evidence_pack.get("canonical_url") or "")
+    product_name = str(
+        request.evidence_pack.get("canonical_product_name")
+        or request.evidence_pack.get("product_name")
+        or "Example Product"
+    )
+    naver_match = "완전일치" if request.requested_platform_mode in {"naver_sa", "both"} else ""
+    google_match = "exact" if request.requested_platform_mode in {"google_sa", "both"} else ""
+    negative_naver_match = "제외키워드" if request.requested_platform_mode in {"naver_sa", "both"} else ""
+    negative_google_match = "negative" if request.requested_platform_mode in {"google_sa", "both"} else ""
+    rows = [
+        KeywordRow(
+            url=raw_url,
+            product_name=product_name,
+            category="brand",
+            keyword=product_name,
+            naver_match=naver_match,
+            google_match=google_match,
+            reason="stubbed runtime generation result",
+            quality_warning=False,
+        ),
+        KeywordRow(
+            url=raw_url,
+            product_name=product_name,
+            category="negative",
+            keyword="중고",
+            naver_match=negative_naver_match,
+            google_match=negative_google_match,
+            reason="stubbed runtime exclusion keyword",
+            quality_warning=False,
+        ),
+    ]
+    positive_counts = {}
+    category_counts = {}
+    weak_ratios = {}
+    for platform in (["naver_sa", "google_sa"] if request.requested_platform_mode == "both" else [request.requested_platform_mode]):
+        positive_counts[platform] = 100
+        category_counts[platform] = {"brand": 100}
+        weak_ratios[platform] = 0.0
+    return GenerationResult(
+        status="COMPLETED",
+        requested_platform_mode=request.requested_platform_mode,
+        rows=rows,
+        supplementation_attempts=0,
+        validation_report=ValidationReport(
+            status="COMPLETED",
+            requested_platform_mode=request.requested_platform_mode,
+            positive_keyword_counts=positive_counts,
+            category_counts=category_counts,
+            weak_tier_ratio_by_platform=weak_ratios,
+            quality_warning=False,
+        ),
+    )
+
+
+def _failed_generation_result(request) -> GenerationResult:
+    raw_url = str(request.evidence_pack.get("raw_url") or request.evidence_pack.get("canonical_url") or "")
+    product_name = str(
+        request.evidence_pack.get("canonical_product_name")
+        or request.evidence_pack.get("product_name")
+        or "Example Product"
+    )
+    naver_match = "확장소재" if request.requested_platform_mode in {"naver_sa", "both"} else ""
+    rows = [
+        KeywordRow(
+            url=raw_url,
+            product_name=product_name,
+            category="generic_category",
+            keyword=f"{product_name} 테스트",
+            naver_match=naver_match,
+            google_match="",
+            reason="stubbed failed runtime generation result",
+            quality_warning=False,
+        )
+    ]
+    return GenerationResult(
+        status="FAILED_GENERATION",
+        requested_platform_mode=request.requested_platform_mode,
+        rows=rows,
+        supplementation_attempts=1,
+        validation_report=ValidationReport(
+            status="FAILED_GENERATION",
+            requested_platform_mode=request.requested_platform_mode,
+            positive_keyword_counts={"naver_sa": 74} if request.requested_platform_mode in {"naver_sa", "both"} else {},
+            category_counts={"naver_sa": {"generic_category": 1}} if request.requested_platform_mode in {"naver_sa", "both"} else {},
+            weak_tier_ratio_by_platform={"naver_sa": 0.0} if request.requested_platform_mode in {"naver_sa", "both"} else {},
+            failure_code="generation_count_shortfall",
+            failure_detail="naver_sa positive rows below 100",
+            quality_warning=False,
+        ),
+    )
+
+
 def test_runtime_partial_completion_writes_summary_and_single_notification(
     s3_client,
     dynamodb_client,
     sqs_client,
     evidence_fixture_loader,
+    monkeypatch,
 ) -> None:
-    success_url = "https://example.com/laneige"
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _successful_generation_result)
+    success_url = "https://www.laneige.com/kr/product/skincare/water-sleeping-mask"
     failed_url = "https://example.com/promo-landing"
     runtime = _runtime_with_mapping(
         s3_client=s3_client,
@@ -108,13 +205,55 @@ def test_runtime_partial_completion_writes_summary_and_single_notification(
     assert notifications[0].payload["counts"] == {"submitted": 2, "succeeded": 1, "failed": 1}
 
 
+def test_failed_generation_persists_partial_per_url_artifact_and_manifest_reference(
+    s3_client,
+    dynamodb_client,
+    sqs_client,
+    evidence_fixture_loader,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _failed_generation_result)
+    url = "https://www.laneige.com/kr/product/skincare/water-sleeping-mask"
+    runtime = _runtime_with_mapping(
+        s3_client=s3_client,
+        dynamodb_client=dynamodb_client,
+        sqs_client=sqs_client,
+        evidence_fixture_loader=evidence_fixture_loader,
+        mapping={url: "evidence_commerce_pdp_rich.json"},
+    )
+
+    job_id = runtime.submit_job(urls=[url], requested_platform_mode="naver_sa")
+    runtime.drain_all()
+
+    job = runtime.get_job(job_id)
+    task = runtime.get_url_tasks(job_id)[0]
+    assert job["status"] == "FAILED"
+    assert task["status"] == "FAILED_GENERATION"
+    assert task["result_s3_key"].endswith("/result/per_url.json")
+    assert task["failure_s3_key"].endswith("/result/failure.json")
+
+    per_url = runtime.read_json_artifact(task["result_s3_key"])
+    assert per_url["status"] == "FAILED_GENERATION"
+    assert per_url["validation_report"]["failure_code"] == "generation_count_shortfall"
+    assert per_url["rows"][0]["keyword"].endswith("테스트")
+
+    failure = runtime.read_json_artifact(task["failure_s3_key"])
+    assert failure["failure_code"] == "generation_count_shortfall"
+
+    manifest = runtime.read_json_artifact(f"jobs/{job_id}/summary/per_url_manifest.json")
+    assert manifest["items"][0]["status"] == "FAILED_GENERATION"
+    assert manifest["items"][0]["artifact"].endswith("/result/per_url.json")
+
+
 def test_runtime_cache_hit_creates_completed_cached_task_and_skips_regeneration(
     s3_client,
     dynamodb_client,
     sqs_client,
     evidence_fixture_loader,
+    monkeypatch,
 ) -> None:
-    url = "https://example.com/macbook?utm_source=test"
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _successful_generation_result)
+    url = "https://www.apple.com/kr/shop/product/MacBookPro14-M3Pro/spec?utm_source=test"
     resolver_calls = {"count": 0}
 
     def loader(name: str):
@@ -162,8 +301,10 @@ def test_cache_cross_mode_reuse_both_from_separate_components(
     dynamodb_client,
     sqs_client,
     evidence_fixture_loader,
+    monkeypatch,
 ) -> None:
-    url = "https://example.com/macbook?utm_source=test"
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _successful_generation_result)
+    url = "https://www.apple.com/kr/shop/product/MacBookPro14-M3Pro/spec?utm_source=test"
     resolver_calls = {"count": 0}
 
     def loader(name: str):
@@ -217,7 +358,9 @@ def test_runtime_with_html_collection_runtime_helper_processes_fixture_html(
     dynamodb_client,
     sqs_client,
     fixtures_dir,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("src.runtime.service.generate_keywords", _successful_generation_result)
     resources = create_runtime_resources(
         s3_client=s3_client,
         dynamodb_client=dynamodb_client,
@@ -236,14 +379,14 @@ def test_runtime_with_html_collection_runtime_helper_processes_fixture_html(
         fetcher=FixtureHtmlFetcher(
             base_dir=fixtures_dir.parent.parent / "artifacts" / "service_test_pages",
             url_to_file={
-                "https://example.com/on-pdp": "on_pdp_en.html",
-                "https://example.com/naver-blocked": "naver_smartstore_blocked.html",
+                "https://www.on.com/en-us/products/cloudmonster": "on_pdp_en.html",
+                "https://smartstore.naver.com/blocked": "naver_smartstore_blocked.html",
             },
         ),
     )
 
     job_id = runtime.submit_job(
-        urls=["https://example.com/on-pdp", "https://example.com/naver-blocked"],
+        urls=["https://www.on.com/en-us/products/cloudmonster", "https://smartstore.naver.com/blocked"],
         requested_platform_mode="naver_sa",
     )
     runtime.drain_all()

@@ -32,7 +32,31 @@ PROMO_PATTERNS = ("이벤트", "혜택", "쿠폰", "benefit", "sale", "offer", "
 BUY_PATTERNS = ("장바구니", "구매하기", "add to cart", "buy now", "cart", "checkout")
 STOCK_PATTERNS = ("in stock", "재고", "품절", "out of stock")
 PRICE_PATTERNS = (r"₩\s?\d", r"\$\s?\d", r"\b\d{2,3},\d{3}\b", r"\b\d{4,6}\b")
-PRODUCT_URL_PATTERNS = ("/products/", "/product/", "/shop/product/", "/display/event_detail")
+PRODUCT_URL_PATTERNS = (
+    "/products/",
+    "/product/",
+    "/shop/product/",
+    "/display/event_detail",
+    "/shop/buy-",
+    "/mobile-accessories/",
+    "goodsdetail.do",
+    "/product/view",
+    "productcd=",
+    "goodsno=",
+)
+IMAGE_SOURCE_ATTRIBUTES = ("src", "data-src", "data-lazy-src", "data-original", "ec-data-src", "srcset")
+DETAIL_IMAGE_PATH_HINTS = (
+    "/web/upload/webp/",
+    "/web/upload/",
+    "/web/product/extra/",
+    "/editor/",
+    "/detail/",
+    "/content/",
+    "_detail",
+    "_result",
+)
+
+BLOCKER_HTML_PATTERNS = ("window.awswafcookiedomainlist", "gokuprops", "__cf_bm", "cf-chl-", "challenge-form")
 
 
 @dataclass(slots=True)
@@ -204,19 +228,26 @@ def build_snapshot_from_fixture(payload: dict[str, Any]) -> NormalizedPageSnapsh
         weak_backfill_used=bool(payload.get("weak_backfill_used", False)),
         facts=list(payload.get("facts", [])),
         ocr_text_blocks=list(payload.get("ocr_text_blocks", [])),
+        ocr_image_results=list(payload.get("ocr_image_results", [])),
     )
 
 
 def collect_snapshot_from_html(fetch_result: HtmlFetchResult) -> NormalizedPageSnapshot:
-    title = _extract_first_group(r"<title[^>]*>(.*?)</title>", fetch_result.html)
-    meta_description = _extract_meta(fetch_result.html, "description")
+    raw_title = _extract_first_group(r"<title[^>]*>(.*?)</title>", fetch_result.html)
+    og_title = _extract_meta(fetch_result.html, "og:title", property_mode=True)
+    raw_meta_description = _extract_meta(fetch_result.html, "description")
+    og_meta_description = _extract_meta(fetch_result.html, "og:description", property_mode=True)
     canonical_tag = _extract_canonical(fetch_result.html)
     meta_locale = _extract_meta(fetch_result.html, "og:locale", property_mode=True)
     lang = _extract_first_group(r"<html[^>]+lang=[\"']([^\"']+)[\"']", fetch_result.html)
     decoded_text = _extract_visible_text(fetch_result.html)
-    visible_blocks = [block for block in re.split(r"\n+", decoded_text) if block][:20]
+    visible_blocks = _meaningful_visible_blocks_v2(decoded_text)
     image_candidates = _extract_image_candidates(fetch_result.html, fetch_result.final_url)
     structured_data = _extract_structured_data(fetch_result.html)
+    structured_product = _extract_structured_product_signals_v2(structured_data)
+    title = _resolve_primary_title_v2(raw_title, og_title, structured_product["product_name"])
+    meta_description = _first_non_empty_v2(raw_meta_description, og_meta_description, structured_product["description"])
+    product_name = _resolve_product_name_v2(title, og_title, structured_product["product_name"], fetch_result.final_url)
 
     lowered = f"{title} {meta_description} {decoded_text}".lower()
     price_signals = _find_matches(lowered, PRICE_PATTERNS, regex=True)
@@ -225,14 +256,28 @@ def collect_snapshot_from_html(fetch_result: HtmlFetchResult) -> NormalizedPageS
     promo_signals = _find_matches(lowered, PROMO_PATTERNS)
     support_signals = _find_matches(lowered, SUPPORT_PATTERNS)
     download_signals = _find_matches(lowered, DOWNLOAD_PATTERNS)
-    blocker_signals = _find_matches(lowered, BLOCKER_PATTERNS)
+    blocker_signals = _dedupe_strings(
+        [
+            *_find_matches(lowered, BLOCKER_PATTERNS),
+            *_find_matches(fetch_result.html.lower(), BLOCKER_HTML_PATTERNS),
+        ]
+    )
     waiting_signals = _find_matches(lowered, WAITING_PATTERNS)
-    primary_tokens = _product_tokens(title, meta_description)
+    primary_tokens = _product_tokens(title, meta_description, product_name, structured_product["brand"])
     usable_text_chars = len(decoded_text)
     support_density = _density(len(support_signals), usable_text_chars)
     download_density = _density(len(download_signals), usable_text_chars)
     promo_density = _density(len(promo_signals), usable_text_chars)
-    single_product_confidence = _single_product_confidence(title, decoded_text, fetch_result.final_url)
+    single_product_confidence = _single_product_confidence(
+        title=title,
+        product_name=product_name,
+        decoded_text=decoded_text,
+        final_url=fetch_result.final_url,
+        price_signals=price_signals,
+        buy_signals=buy_signals,
+        primary_product_tokens=primary_tokens,
+        has_structured_product=structured_product["has_product_schema"],
+    )
     sellability_confidence = _sellability_confidence(price_signals, buy_signals, stock_signals)
 
     page_class_hint = _classify_html(
@@ -247,11 +292,11 @@ def collect_snapshot_from_html(fetch_result: HtmlFetchResult) -> NormalizedPageS
         price_signals=price_signals,
         buy_signals=buy_signals,
         single_product_confidence=single_product_confidence,
+        has_structured_product=structured_product["has_product_schema"],
         usable_text_chars=usable_text_chars,
     )
     quality_warning = page_class_hint in {"support_spec_page", "document_download_heavy_support_page", "image_heavy_commerce_pdp"}
     ocr_trigger_reasons = ["image_heavy_page"] if page_class_hint == "image_heavy_commerce_pdp" else []
-    product_name = title or fetch_result.final_url
     sellability_state = "sellable" if price_signals or buy_signals else "non_sellable"
     stock_state = "Unknown"
     if any("out of stock" in signal or "품절" in signal for signal in stock_signals):
@@ -308,6 +353,7 @@ def collect_snapshot_from_html(fetch_result: HtmlFetchResult) -> NormalizedPageS
         weak_backfill_used=False,
         facts=[],
         ocr_text_blocks=[],
+        ocr_image_results=[],
     )
 
 
@@ -340,6 +386,8 @@ def classify_snapshot(snapshot: NormalizedPageSnapshot) -> PageClassification:
         )
 
     if not should_use_bedrock():
+        return rule_result
+    if page_class in {"blocked_page", "waiting_page", "support_spec_page", "document_download_heavy_support_page"}:
         return rule_result
 
     override_class = _bedrock_product_gate(snapshot)
@@ -381,11 +429,20 @@ def _bedrock_product_gate(snapshot: NormalizedPageSnapshot) -> str | None:
     from src.clients.bedrock import BedrockRuntimeSettings, converse_text
 
     title = (snapshot.title or "")[:200]
-    excerpt = (snapshot.visible_text or "")[:800]
-    if not title and not excerpt:
+    product_name = (snapshot.product_name or "")[:200]
+    meta_description = (snapshot.meta_description or "")[:240]
+    excerpt_source = _bedrock_excerpt_source_v2(snapshot)
+    excerpt = excerpt_source[:800]
+    if not title and not product_name and not excerpt:
         return None
 
-    user_prompt = f"Title: {title}\n\nText excerpt:\n{excerpt}"
+    user_prompt = (
+        f"Rule-based page hint: {snapshot.page_class_hint or 'unknown'}\n"
+        f"Product name: {product_name}\n"
+        f"Title: {title}\n"
+        f"Meta description: {meta_description}\n\n"
+        f"Text excerpt:\n{excerpt}"
+    )
     try:
         _, response_text = converse_text(
             user_prompt,
@@ -538,12 +595,38 @@ def _decoded_text_score(decoded: str, mojibake_flags: list[str]) -> float:
 
 def _extract_image_candidates(html_text: str, base_url: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    for match in re.finditer(r"<img[^>]+src=[\"'](.*?)[\"'][^>]*>", html_text, flags=re.IGNORECASE):
-        tag = match.group(0)
-        src = match.group(1)
-        alt = _extract_first_group(r"alt=[\"'](.*?)[\"']", tag) or ""
-        candidates.append({"src": urljoin(base_url, src), "alt": alt})
-        if len(candidates) >= 10:
+    seen: set[str] = set()
+    for index, match in enumerate(re.finditer(r"<img\b[^>]*>", html_text, flags=re.IGNORECASE)):
+        attributes = _parse_tag_attributes(match.group(0))
+        alt = attributes.get("alt", "")
+        width = _safe_int(attributes.get("width"))
+        height = _safe_int(attributes.get("height"))
+        for attribute_name in IMAGE_SOURCE_ATTRIBUTES:
+            raw_value = attributes.get(attribute_name)
+            if not raw_value:
+                continue
+            src = _normalize_image_source(raw_value)
+            if not src:
+                continue
+            resolved_src = urljoin(base_url, src)
+            if resolved_src in seen:
+                continue
+            seen.add(resolved_src)
+            lower_src = resolved_src.lower()
+            detail_hint = attribute_name != "src" or any(token in lower_src for token in DETAIL_IMAGE_PATH_HINTS)
+            candidates.append(
+                {
+                    "src": resolved_src,
+                    "alt": alt,
+                    "attribute": attribute_name,
+                    "dom_index": index,
+                    "detail_hint": detail_hint,
+                    "width": width,
+                    "height": height,
+                }
+            )
+            break
+        if len(candidates) >= 30:
             break
     return candidates
 
@@ -564,6 +647,39 @@ def _extract_structured_data(html_text: str) -> list[dict[str, Any]]:
     return payloads
 
 
+def _parse_tag_attributes(tag: str) -> dict[str, str]:
+    attributes: dict[str, str] = {}
+    for name, _, value in re.findall(r"([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*([\"'])(.*?)\2", tag, flags=re.DOTALL):
+        attributes[name.lower()] = html.unescape(value).strip()
+    return attributes
+
+
+def _normalize_image_source(value: str) -> str | None:
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if "," in candidate and ("srcset" in candidate or " " in candidate):
+        candidate = candidate.split(",", 1)[0]
+    if " " in candidate:
+        candidate = candidate.split(" ", 1)[0]
+    candidate = candidate.strip()
+    if candidate.startswith("data:"):
+        return None
+    return candidate or None
+
+
+def _safe_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"\d+", value)
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return None
+
+
 def _find_matches(text: str, patterns: tuple[str, ...], *, regex: bool = False) -> list[str]:
     matches: list[str] = []
     for pattern in patterns:
@@ -575,8 +691,8 @@ def _find_matches(text: str, patterns: tuple[str, ...], *, regex: bool = False) 
     return matches
 
 
-def _product_tokens(title: str | None, meta_description: str | None) -> list[str]:
-    source = " ".join(part for part in (title, meta_description) if part)
+def _product_tokens(*parts: str | None) -> list[str]:
+    source = " ".join(part for part in parts if part)
     tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+-]{2,}", source)
     seen: set[str] = set()
     unique: list[str] = []
@@ -595,17 +711,37 @@ def _density(signal_count: int, usable_text_chars: int) -> float:
     return round(signal_count / usable_text_chars, 6)
 
 
-def _single_product_confidence(title: str | None, decoded_text: str, final_url: str) -> float:
-    title_text = (title or "").lower()
-    score = 0.2
-    if title and len(title.split()) >= 2:
+def _single_product_confidence(
+    *,
+    title: str | None,
+    product_name: str | None,
+    decoded_text: str,
+    final_url: str,
+    price_signals: list[str],
+    buy_signals: list[str],
+    primary_product_tokens: list[str],
+    has_structured_product: bool,
+) -> float:
+    source_text = " ".join(part for part in (title, product_name) if part).lower()
+    score = 0.15
+    if title and len(re.findall(r"[A-Za-z0-9가-힣]+", title)) >= 2:
+        score += 0.12
+    if product_name and product_name != title:
+        score += 0.08
+    if any(part in final_url.lower() for part in PRODUCT_URL_PATTERNS):
+        score += 0.18
+    if has_structured_product:
         score += 0.25
-    if any(part in final_url.lower() for part in PRODUCT_URL_PATTERNS[:2]):
-        score += 0.25
-    if re.search(r"\b(pro|mask|cream|cloudtilt|airpods|macbook)\b", title_text):
-        score += 0.2
-    if len(decoded_text) > 800:
+    if primary_product_tokens:
         score += 0.1
+    if re.search(r"\b(pro|mask|cream|cloudtilt|airpods|macbook|iphone|galaxy|case|retinol|keyboard|pencil)\b", source_text):
+        score += 0.12
+    if price_signals and buy_signals:
+        score += 0.15
+    elif price_signals or buy_signals:
+        score += 0.08
+    if len(decoded_text) > 800:
+        score += 0.05
     return min(score, 0.95)
 
 
@@ -646,6 +782,7 @@ def _classify_html(
     price_signals: list[str],
     buy_signals: list[str],
     single_product_confidence: float,
+    has_structured_product: bool,
     usable_text_chars: int,
 ) -> str:
     title_lower = (title or "").lower()
@@ -661,20 +798,243 @@ def _classify_html(
         return "blocked_page"
     if waiting_signals:
         return "waiting_page"
-    if promo_signals and single_product_confidence <= 0.6 and (is_landing_surface or len(promo_signals) >= 2):
-        return "promo_heavy_commerce_landing"
     if has_support_context and support_signals and len(download_signals) >= 3:
         return "document_download_heavy_support_page"
     if has_support_context and support_signals:
         return "support_spec_page"
+    strong_commerce_evidence = (
+        single_product_confidence >= 0.65
+        or bool(has_structured_product and (price_signals or buy_signals))
+        or bool(price_signals and buy_signals and single_product_confidence >= 0.55 and not is_landing_surface)
+    )
+    if strong_commerce_evidence and price_signals and buy_signals and usable_text_chars < 2500:
+        return "image_heavy_commerce_pdp"
+    if strong_commerce_evidence and (price_signals or buy_signals):
+        return "commerce_pdp"
+    if promo_signals and not strong_commerce_evidence and (is_landing_surface or len(promo_signals) >= 2):
+        return "promo_heavy_commerce_landing"
     if "__nuxt__={};" in lowered or usable_text_chars < 250 or lowered.count("/products/") > 8:
         return "non_product_page"
-    if price_signals and buy_signals and usable_text_chars < 2500:
-        return "image_heavy_commerce_pdp"
-    if price_signals or buy_signals:
-        return "commerce_pdp"
     if "/shop/" in fetch_result.final_url.lower() or "/product/" in fetch_result.final_url.lower():
         return "marketing_only_pdp"
     if title_lower:
         return "product_marketing_page"
     return "non_product_page"
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(value)
+    return deduped
+
+
+def _meaningful_visible_blocks(decoded_text: str) -> list[str]:
+    blocks: list[str] = []
+    for block in re.split(r"\n+", decoded_text):
+        cleaned = " ".join(block.split()).strip()
+        if not cleaned:
+            continue
+        if not re.search(r"[A-Za-z0-9가-힣]", cleaned):
+            continue
+        blocks.append(cleaned)
+        if len(blocks) >= 20:
+            break
+    return blocks
+
+
+def _first_non_empty(*candidates: str | None) -> str | None:
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return None
+
+
+def _resolve_primary_title(
+    raw_title: str | None,
+    og_title: str | None,
+    structured_product_name: str | None,
+) -> str | None:
+    if raw_title and not _looks_generic_title(raw_title):
+        return raw_title
+    return _first_non_empty(og_title, structured_product_name, raw_title)
+
+
+def _resolve_product_name(
+    title: str | None,
+    og_title: str | None,
+    structured_product_name: str | None,
+    final_url: str,
+) -> str | None:
+    return _first_non_empty(structured_product_name, og_title, title, final_url)
+
+
+def _looks_generic_title(title: str) -> bool:
+    tokens = re.findall(r"[A-Za-z0-9가-힣][A-Za-z0-9가-힣.+&-]*", title)
+    if not tokens:
+        return True
+    if any(token in title.lower() for token in ("waiting room", "잠시만", "captcha", "forbidden", "access denied")):
+        return False
+    if any(char.isdigit() for char in title):
+        return False
+    return len(tokens) <= 2
+
+
+def _extract_structured_product_signals(structured_data: list[dict[str, Any]]) -> dict[str, str | bool | None]:
+    signals: dict[str, str | bool | None] = {
+        "has_product_schema": False,
+        "product_name": None,
+        "brand": None,
+        "description": None,
+    }
+    for node in _iter_structured_nodes(structured_data):
+        node_type = node.get("@type")
+        if isinstance(node_type, list):
+            type_names = [str(value) for value in node_type]
+        elif node_type is None:
+            type_names = []
+        else:
+            type_names = [str(node_type)]
+        if "Product" not in type_names:
+            continue
+        signals["has_product_schema"] = True
+        signals["product_name"] = signals["product_name"] or _optional_str(node.get("name"))
+        signals["description"] = signals["description"] or _optional_str(node.get("description"))
+        brand_value = node.get("brand")
+        if isinstance(brand_value, dict):
+            signals["brand"] = signals["brand"] or _optional_str(brand_value.get("name"))
+        elif brand_value:
+            signals["brand"] = signals["brand"] or _optional_str(brand_value)
+    return signals
+
+
+def _iter_structured_nodes(structured_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    pending: list[Any] = list(structured_data)
+    while pending:
+        current = pending.pop(0)
+        if isinstance(current, list):
+            pending[0:0] = current
+            continue
+        if not isinstance(current, dict):
+            continue
+        graph = current.get("@graph")
+        if isinstance(graph, list):
+            pending[0:0] = graph
+        nodes.append(current)
+    return nodes
+
+
+def _bedrock_excerpt_source(snapshot: NormalizedPageSnapshot) -> str:
+    visible_excerpt = "\n".join(_meaningful_visible_blocks("\n".join(snapshot.visible_text_blocks or [])))
+    if len(visible_excerpt) >= 120:
+        return visible_excerpt
+    return "\n".join(part for part in (snapshot.meta_description or "", snapshot.decoded_text or "") if part)
+
+
+def _meaningful_visible_blocks_v2(decoded_text: str) -> list[str]:
+    blocks: list[str] = []
+    for block in re.split(r"\n+", decoded_text):
+        cleaned = " ".join(block.split()).strip()
+        if not cleaned:
+            continue
+        if not re.search(r"[A-Za-z0-9\u3131-\uD79D]", cleaned):
+            continue
+        blocks.append(cleaned)
+        if len(blocks) >= 20:
+            break
+    return blocks
+
+
+def _first_non_empty_v2(*candidates: str | None) -> str | None:
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return None
+
+
+def _looks_generic_title_v2(title: str) -> bool:
+    tokens = re.findall(r"[A-Za-z0-9\u3131-\uD79D][A-Za-z0-9\u3131-\uD79D.+&-]*", title)
+    if not tokens:
+        return True
+    if any(token in title.lower() for token in ("waiting room", "captcha", "forbidden", "access denied")):
+        return False
+    if any(char.isdigit() for char in title):
+        return False
+    return len(tokens) <= 2
+
+
+def _resolve_primary_title_v2(
+    raw_title: str | None,
+    og_title: str | None,
+    structured_product_name: str | None,
+) -> str | None:
+    if raw_title and not _looks_generic_title_v2(raw_title):
+        return raw_title
+    return _first_non_empty_v2(og_title, structured_product_name, raw_title)
+
+
+def _resolve_product_name_v2(
+    title: str | None,
+    og_title: str | None,
+    structured_product_name: str | None,
+    final_url: str,
+) -> str | None:
+    return _first_non_empty_v2(structured_product_name, og_title, title, final_url)
+
+
+def _extract_structured_product_signals_v2(structured_data: list[dict[str, Any]]) -> dict[str, str | bool | None]:
+    signals: dict[str, str | bool | None] = {
+        "has_product_schema": False,
+        "product_name": None,
+        "brand": None,
+        "description": None,
+    }
+    for node in _iter_structured_nodes_v2(structured_data):
+        node_type = node.get("@type")
+        if isinstance(node_type, list):
+            type_names = [str(value) for value in node_type]
+        elif node_type is None:
+            type_names = []
+        else:
+            type_names = [str(node_type)]
+        if "Product" not in type_names:
+            continue
+        signals["has_product_schema"] = True
+        signals["product_name"] = signals["product_name"] or _optional_str(node.get("name"))
+        signals["description"] = signals["description"] or _optional_str(node.get("description"))
+        brand_value = node.get("brand")
+        if isinstance(brand_value, dict):
+            signals["brand"] = signals["brand"] or _optional_str(brand_value.get("name"))
+        elif brand_value:
+            signals["brand"] = signals["brand"] or _optional_str(brand_value)
+    return signals
+
+
+def _iter_structured_nodes_v2(structured_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    pending: list[Any] = list(structured_data)
+    while pending:
+        current = pending.pop(0)
+        if isinstance(current, list):
+            pending[0:0] = current
+            continue
+        if not isinstance(current, dict):
+            continue
+        graph = current.get("@graph")
+        if isinstance(graph, list):
+            pending[0:0] = graph
+        nodes.append(current)
+    return nodes
+
+
+def _bedrock_excerpt_source_v2(snapshot: NormalizedPageSnapshot) -> str:
+    visible_excerpt = "\n".join(_meaningful_visible_blocks_v2("\n".join(snapshot.visible_text_blocks or [])))
+    if len(visible_excerpt) >= 120:
+        return visible_excerpt
+    return "\n".join(part for part in (snapshot.meta_description or "", snapshot.decoded_text or "") if part)

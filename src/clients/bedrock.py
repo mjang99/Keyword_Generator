@@ -9,7 +9,7 @@ import boto3
 from botocore.config import Config
 
 DEFAULT_REGION = "ap-northeast-2"
-DEFAULT_MAX_TOKENS = 3000
+DEFAULT_MAX_TOKENS = 6000
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_TOP_P = 0.95
 DEFAULT_MODEL_CANDIDATES = (
@@ -105,13 +105,26 @@ def extract_text(response: dict[str, Any]) -> str:
     return "".join(text_parts).strip()
 
 
-def converse_text(
+def extract_metadata(
+    response: dict[str, Any],
+    *,
+    model_id: str,
+) -> dict[str, Any]:
+    usage = response.get("usage")
+    return {
+        "model_id": model_id,
+        "stop_reason": str(response.get("stopReason") or ""),
+        "usage": dict(usage) if isinstance(usage, dict) else {},
+    }
+
+
+def converse_text_with_metadata(
     user_prompt: str,
     *,
     settings: BedrockRuntimeSettings | None = None,
     system_prompt: str | None = None,
     client: Any | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, Any]]:
     resolved = settings or BedrockRuntimeSettings.from_env()
     runtime_client = client or build_bedrock_runtime_client(resolved)
     last_error: Exception | None = None
@@ -126,7 +139,7 @@ def converse_text(
                     system_prompt=system_prompt,
                 ),
             )
-            return model_id, extract_text(response)
+            return model_id, extract_text(response), extract_metadata(response, model_id=model_id)
         except Exception as exc:  # pragma: no cover - boto errors vary by env
             last_error = exc
             continue
@@ -134,6 +147,22 @@ def converse_text(
     if last_error is None:
         raise RuntimeError("No Bedrock model candidates configured")
     raise last_error
+
+
+def converse_text(
+    user_prompt: str,
+    *,
+    settings: BedrockRuntimeSettings | None = None,
+    system_prompt: str | None = None,
+    client: Any | None = None,
+) -> tuple[str, str]:
+    model_id, text, _ = converse_text_with_metadata(
+        user_prompt,
+        settings=settings,
+        system_prompt=system_prompt,
+        client=client,
+    )
+    return model_id, text
 
 
 def settings_summary(settings: BedrockRuntimeSettings | None = None) -> dict[str, Any]:

@@ -54,6 +54,7 @@ class NormalizedPageSnapshot:
     weak_backfill_used: bool = False
     facts: list[dict[str, Any]] = field(default_factory=list)
     ocr_text_blocks: list[dict[str, Any]] = field(default_factory=list)
+    ocr_image_results: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

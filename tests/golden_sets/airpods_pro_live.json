@@ -1,0 +1,46 @@
+{
+  "case_id": "airpods_pro_live",
+  "source_path": "artifacts/live_debug_airpods/evidence_pack.json",
+  "requested_platform_mode": "both",
+  "notes": "Audio commerce page. Used to ensure skincare leakage never returns while preserving obvious earbud queries.",
+  "platform_expectations": {
+    "naver_sa": {
+      "must_keep": [
+        "Apple",
+        "wireless earbuds"
+      ],
+      "forbidden_substrings": [
+        "보습",
+        "장벽",
+        "야간",
+        "나이트",
+        "수면",
+        "건조 피부",
+        "민감 피부"
+      ],
+      "required_categories": [
+        "brand",
+        "generic_category"
+      ]
+    },
+    "google_sa": {
+      "must_keep": [
+        "Apple",
+        "wireless earbuds"
+      ],
+      "forbidden_substrings": [
+        "보습",
+        "장벽",
+        "야간",
+        "나이트",
+        "수면",
+        "건조 피부",
+        "민감 피부"
+      ],
+      "required_categories": [
+        "brand",
+        "generic_category"
+      ]
+    }
+  }
+}

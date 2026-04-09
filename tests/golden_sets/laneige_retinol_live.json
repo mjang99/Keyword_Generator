@@ -1,0 +1,56 @@
+{
+  "case_id": "laneige_retinol_live",
+  "source_path": "artifacts/live_debug/evidence_pack.json",
+  "requested_platform_mode": "both",
+  "notes": "Seeded from legacy gen_v10 outputs. Retains useful retinol/serum surfaces while banning obvious scaffold and placeholder carryovers.",
+  "platform_expectations": {
+    "naver_sa": {
+      "must_keep": [
+        "퍼펙트 리뉴 레티놀",
+        "레티놀 세럼",
+        "레티놀 크림",
+        "퍼펙트 리뉴 레티놀 가격"
+      ],
+      "must_not_emit": [
+        "제품",
+        "제품 보습",
+        "제품 민감",
+        "퍼펙트 리뉴 레티놀 구매 전 체크",
+        "퍼펙트 리뉴 레티놀 구매 준비",
+        "퍼펙트 리뉴 레티놀 옵션 비교",
+        "퍼펙트 리뉴 레티놀 라인 비교"
+      ],
+      "required_categories": [
+        "brand",
+        "generic_category",
+        "feature_attribute",
+        "purchase_intent",
+        "benefit_price"
+      ]
+    },
+    "google_sa": {
+      "must_keep": [
+        "퍼펙트 리뉴 레티놀",
+        "레티놀 세럼",
+        "레티놀 크림",
+        "퍼펙트 리뉴 레티놀 가격"
+      ],
+      "must_not_emit": [
+        "제품",
+        "제품 보습",
+        "제품 민감",
+        "퍼펙트 리뉴 레티놀 구매 전 체크",
+        "퍼펙트 리뉴 레티놀 구매 준비",
+        "퍼펙트 리뉴 레티놀 옵션 비교",
+        "퍼펙트 리뉴 레티놀 라인 비교"
+      ],
+      "required_categories": [
+        "brand",
+        "generic_category",
+        "feature_attribute",
+        "purchase_intent",
+        "benefit_price"
+      ]
+    }
+  }
+}

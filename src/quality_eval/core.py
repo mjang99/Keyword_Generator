@@ -6,6 +6,7 @@ from typing import Any
 
 from src.keyword_generation.constants import POSITIVE_CATEGORIES
 from src.keyword_generation.models import KeywordRow
+from src.keyword_generation.policy import invalid_negative_row_count, malformed_positive_row_count
 
 FILLER_SUFFIXES = (
     "특성 검색",
@@ -97,6 +98,7 @@ class PerUrlEvaluationInput:
     page_class: str
     requested_platform_mode: str
     quality_warning: bool
+    evidence_pack: dict[str, Any] | None = None
     rows: list[KeywordRow] = field(default_factory=list)
     status: str = "COMPLETED"
 
@@ -126,6 +128,8 @@ class EvaluationMetrics:
     reason_filled_ratio: float
     category_distribution_deviation: float
     auto_score: float
+    malformed_positive_count: int = 0
+    invalid_negative_count: int = 0
 
 
 @dataclass(slots=True)
@@ -174,6 +178,7 @@ def compute_auto_scores(rows: list[KeywordRow], platform: str, evidence_pack: di
         page_class=str(evidence_pack.get("page_class") or ""),
         requested_platform_mode=platform,
         quality_warning=bool(evidence_pack.get("quality_warning", False)),
+        evidence_pack=evidence_pack,
         rows=list(rows),
     )
     result = evaluate_per_url_input(per_url, platform=platform)
@@ -182,6 +187,8 @@ def compute_auto_scores(rows: list[KeywordRow], platform: str, evidence_pack: di
         and result.metrics.filler_ratio < 0.15
         and result.metrics.avg_naturalness >= 0.7
         and result.metrics.exact_unique_ratio >= 0.95
+        and result.metrics.malformed_positive_count == 0
+        and result.metrics.invalid_negative_count == 0
     )
     return {
         "platform": platform,
@@ -195,6 +202,8 @@ def compute_auto_scores(rows: list[KeywordRow], platform: str, evidence_pack: di
         "reason_filled_ratio": round(result.metrics.reason_filled_ratio, 3),
         "category_distribution_deviation": round(result.metrics.category_distribution_deviation, 3),
         "auto_score": round(result.metrics.auto_score, 1),
+        "malformed_positive_count": result.metrics.malformed_positive_count,
+        "invalid_negative_count": result.metrics.invalid_negative_count,
         "pass": reference_pass,
         "failure_reasons": list(result.gate.failure_reasons),
     }
@@ -247,6 +256,8 @@ def evaluate_per_url_input(item: PerUrlEvaluationInput, *, platform: str) -> Per
             reason_filled_ratio=0.0,
             category_distribution_deviation=1.0,
             auto_score=0.0,
+            malformed_positive_count=0,
+            invalid_negative_count=0,
         )
         return PerUrlEvaluationResult(
             url_task_id=item.url_task_id,
@@ -274,13 +285,34 @@ def evaluate_per_url_input(item: PerUrlEvaluationInput, *, platform: str) -> Per
         abs(category_counts.get(category, 0) / total - target)
         for category, target in IDEAL_CATEGORY_DISTRIBUTION.items()
     ) / len(IDEAL_CATEGORY_DISTRIBUTION)
+    evaluation_pack = item.evidence_pack or {
+        "product_name": platform_rows[0].product_name if platform_rows else "",
+        "canonical_product_name": platform_rows[0].product_name if platform_rows else "",
+        "page_class": item.page_class,
+        "raw_url": item.raw_url,
+        "facts": [],
+    }
+    malformed_positive_count = malformed_positive_row_count(
+        item.rows,
+        evidence_pack=evaluation_pack,
+        platform=platform,
+    )
+    invalid_negative_count = invalid_negative_row_count(
+        item.rows,
+        evidence_pack=evaluation_pack,
+        platform=platform,
+    )
 
     filler_penalty = (filler_count / total) * 60
     naturalness_score = avg_naturalness * 30
     distribution_score = max(0.0, 10 - category_deviation * 100)
     uniqueness_score = semantic_unique_ratio * 10
     reason_score = reason_filled_ratio * 10
-    auto_score = max(0.0, naturalness_score + distribution_score + uniqueness_score + reason_score - filler_penalty)
+    policy_penalty = (malformed_positive_count * 1.5) + (invalid_negative_count * 0.5)
+    auto_score = max(
+        0.0,
+        naturalness_score + distribution_score + uniqueness_score + reason_score - filler_penalty - policy_penalty,
+    )
 
     failure_reasons: list[str] = []
     if total < 100:
@@ -291,6 +323,10 @@ def evaluate_per_url_input(item: PerUrlEvaluationInput, *, platform: str) -> Per
         failure_reasons.append("low_naturalness")
     if semantic_unique_ratio < 0.95:
         failure_reasons.append("low_semantic_uniqueness")
+    if malformed_positive_count > 0:
+        failure_reasons.append("malformed_positive_keywords")
+    if invalid_negative_count > 0:
+        failure_reasons.append("invalid_negative_keywords")
 
     metrics = EvaluationMetrics(
         total_rows=total,
@@ -302,6 +338,8 @@ def evaluate_per_url_input(item: PerUrlEvaluationInput, *, platform: str) -> Per
         reason_filled_ratio=reason_filled_ratio,
         category_distribution_deviation=category_deviation,
         auto_score=min(100.0, auto_score),
+        malformed_positive_count=malformed_positive_count,
+        invalid_negative_count=invalid_negative_count,
     )
     return PerUrlEvaluationResult(
         url_task_id=item.url_task_id,

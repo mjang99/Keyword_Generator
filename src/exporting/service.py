@@ -30,6 +30,7 @@ def build_per_url_json_payload(result: UrlExportResult) -> dict[str, Any]:
         "status": result.generation_result.status,
         "cache_hit": result.cache_hit,
         "rows": [fixed_schema_row(row) for row in result.generation_result.rows],
+        "debug": result.generation_result.debug_payload,
         "validation_report": {
             "status": validation_report.status if validation_report else None,
             "positive_keyword_counts": validation_report.positive_keyword_counts if validation_report else {},

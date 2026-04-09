@@ -82,7 +82,7 @@ variable "bedrock_model_id" {
 variable "bedrock_max_tokens" {
   type        = number
   description = "Explicit Bedrock max token setting."
-  default     = 3000
+  default     = 6000
 }
 
 variable "log_retention_days" {

@@ -89,3 +89,197 @@ def test_build_evidence_pack_uses_admitted_ocr_blocks_and_sets_warning_when_domi
     assert evidence_pack["ocr_used"] is True
     assert len(evidence_pack["ocr_text_blocks"]) == 1
     assert evidence_pack["quality_warning"] is True
+
+
+def test_ocr_promotes_hidden_detail_assets_even_when_html_text_is_sufficient() -> None:
+    snapshot = _snapshot(
+        page_class_hint="commerce_pdp",
+        usable_text_chars=4800,
+        image_candidates=[
+            {"src": "https://cdn.example.com/product-hero.jpg", "alt": "제품 메인", "width": 1200, "height": 1200, "attribute": "src"},
+            {
+                "src": "https://aprilskin.com/web/upload/webp/skin/260119_centella1_03_result.webp",
+                "alt": "진정 레시피",
+                "attribute": "ec-data-src",
+                "detail_hint": True,
+            },
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.status == "SKIPPED"
+    assert "detail_image_candidate" in decision.trigger_reasons
+    assert "no_ocr_blocks_available" in decision.trigger_reasons
+    assert decision.ranked_image_candidates[0]["src"].endswith("260119_centella1_03_result.webp")
+
+
+def test_ocr_keeps_broad_candidate_sweep_for_quality_first_mode() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=900,
+        image_candidates=[
+            {
+                "src": f"https://cdn.example.com/detail_{index:02d}.jpg",
+                "alt": f"제품 상세 {index}",
+                "width": 1200,
+                "height": 1200,
+                "attribute": "src",
+            }
+            for index in range(12)
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert len(decision.ranked_image_candidates) == 12
+
+
+def test_ocr_marks_table_like_candidates_for_structured_pipeline() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=700,
+        product_name="Shade Chart 5N 7GB",
+        primary_product_tokens=["shade", "chart", "5n", "7gb"],
+        image_candidates=[
+            {
+                "src": "https://cdn.example.com/shade-chart-5n-7gb.png",
+                "alt": "shade comparison table 5N 7GB",
+                "width": 1200,
+                "height": 1200,
+                "attribute": "src",
+            }
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.ranked_image_candidates[0]["candidate_type"] == "table_like_image"
+    assert decision.ranked_image_candidates[0]["ocr_pipeline_type"] == "structured_table"
+
+
+def test_ocr_aggregates_image_level_metadata_from_runner_output() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=700,
+        product_name="Shade Chart 5N 7GB",
+        primary_product_tokens=["shade", "chart", "5n", "7gb"],
+        image_candidates=[
+            {
+                "src": "https://cdn.example.com/shade-chart-5n-7gb.png",
+                "alt": "shade comparison table 5N 7GB",
+                "width": 1200,
+                "height": 1200,
+                "attribute": "src",
+            }
+        ],
+        ocr_text_blocks=[
+            {
+                "text": "5N 7GB 8R neutral ash beige",
+                "source": "image",
+                "image_src": "https://cdn.example.com/shade-chart-5n-7gb.png",
+                "pipeline_type": "structured_table",
+                "engine_used": "PPStructureV3",
+            },
+            {
+                "text": "12345 67890 12345 67890",
+                "source": "image",
+                "image_src": "https://cdn.example.com/shade-chart-5n-7gb.png",
+                "pipeline_type": "structured_table",
+                "engine_used": "PPStructureV3",
+            },
+        ],
+        ocr_image_results=[
+            {
+                "image_src": "https://cdn.example.com/shade-chart-5n-7gb.png",
+                "image_attribute": "src",
+                "image_score": 1.9,
+                "candidate_type": "table_like_image",
+                "pipeline_type": "structured_table",
+                "engine_used": "PPStructureV3",
+                "raw_block_count": 2,
+                "raw_char_count": 48,
+                "status": "completed",
+                "error": None,
+            }
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.status == "AVAILABLE"
+    assert decision.image_results[0]["pipeline_type"] == "structured_table"
+    assert decision.image_results[0]["engine_used"] == "PPStructureV3"
+    assert decision.image_results[0]["admitted_block_count"] == 1
+    assert decision.image_results[0]["rejected_block_count"] == 1
+
+
+def test_ocr_rejects_decorative_runtime_assets_before_live_sweep() -> None:
+    snapshot = _snapshot(
+        page_class_hint="commerce_pdp",
+        usable_text_chars=4800,
+        image_candidates=[
+            {"src": "https://aprilskin.com/web/upload/images/ico_10000.png", "alt": "", "height": 30, "detail_hint": True},
+            {"src": "https://aprilskin.com/web/upload/images/header_scope_renew.svg", "alt": "", "detail_hint": True},
+            {"src": "https://aprilskin.com/web/upload/images/251111_gift_40000won.png", "alt": "", "detail_hint": True},
+            {"src": "https://img.echosting.cafe24.com/design/skin/mono/product/btn_basketDown.gif", "alt": ""},
+            {"src": "https://aprilskin.com/product/'+stickImgSrc+'", "alt": ""},
+            {
+                "src": "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png",
+                "alt": "calming serum detail",
+                "width": 1200,
+                "height": 1200,
+                "attribute": "src",
+            },
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert [candidate["src"] for candidate in decision.ranked_image_candidates] == [
+        "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png"
+    ]
+
+
+def test_ocr_preserves_short_detail_lines_for_downstream_filtering() -> None:
+    snapshot = _snapshot(
+        page_class_hint="commerce_pdp",
+        usable_text_chars=4800,
+        product_name="APRILSKIN Mugwort Centella Calming Serum",
+        primary_product_tokens=["aprilskin", "mugwort", "centella", "calming", "serum"],
+        image_candidates=[
+            {
+                "src": "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png",
+                "alt": "calming serum detail",
+                "width": 1200,
+                "height": 1200,
+                "attribute": "src",
+            }
+        ],
+        ocr_text_blocks=[
+            {
+                "text": "MUGWORT",
+                "source": "image",
+                "image_src": "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png",
+            },
+            {
+                "text": "CALMING SERUM",
+                "source": "image",
+                "image_src": "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png",
+            },
+            {
+                "text": "Niacinamide",
+                "source": "image",
+                "image_src": "https://aprilskin.com/web/product/extra/big/202601/6da5ab56bdeb115fd38c54a36ff61760.png",
+            },
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.status == "AVAILABLE"
+    assert [block["text"] for block in decision.admitted_blocks] == [
+        "CALMING SERUM",
+        "MUGWORT",
+        "Niacinamide",
+    ]

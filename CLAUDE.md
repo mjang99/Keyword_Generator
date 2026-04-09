@@ -86,3 +86,30 @@
 - `docs/OPEN_QUESTIONS.md`
 - `docs/ACTIVE_HANDOFF.md`
 - `tasks/README.md`
+
+## Added Recurrence Rules (2026-04-08)
+
+1. **Reject hardcoded semantic shortcuts during review**: if Codex introduces broad fixed-word mappings for facts like `benefit`, `problem_solution`, `use_case`, `usage`, or `audience`, stop and require a grounded alternative.
+2. **Quality beats count floor**: do not approve filler, forced purchase scaffolds, self-comparison rows, or domain-agnostic boosts just to satisfy category or count quotas.
+3. **Encoding failures must block progress**: any UTF-8 corruption, mojibake, or syntax/import break after edits must be treated as a release blocker, and the session should not proceed to deploy until syntax/import checks pass.
+4. **Recurrence prevention must be written down immediately**: when a defect reveals a missing operating rule, update supervisor/operator guidance in the same task rather than leaving it in chat history only.
+5. **Require regression coverage for extraction-policy changes**: if a fix changes evidence promotion rules, require a focused regression test before approving deploy.
+6. **Do not accept silent Bedrock fallback**: if deploy intent is to validate the LLM path, `bedrock` mode must fail explicitly on Bedrock errors rather than silently using deterministic generation.
+7. **Review slot-completion changes at slot granularity**: when generation moves to `slot_plan`, require `slot_type`-level gaps/debug (`gap_slots`, `slot_gap_report`, `slot_drop_report`) instead of approving category-only completion that obscures which noun-phrase shapes are still missing.
+8. **Hold the line on category-hard / slot-soft semantics**: review Bedrock completion changes against category presence first. Do not approve logic that forces every active slot to emit at least one keyword when that would manufacture weak surfaces.
+9. **Require reasoned slot-drop artifacts**: `slot_drop_report` should preserve `drop_stage`, `drop_reason_code`, and `drop_reason_detail` with `category` and `slot_type`; a plain list of removed rows is not enough for live debugging.
+10. **Keep real Bedrock verification explicit**: default tests stay deterministic; real Bedrock parity should be validated in a dedicated `live_bedrock` suite gated by env and skipped when the environment is unavailable.
+11. **Do not approve promo-first classifier regressions**: strong PDP signals such as product schema, product-level meta, product URLs, and credible buy/price evidence must outrank promo-heavy landing heuristics.
+12. **Treat blocked/waiting page classes as status signals, not semantic judgments**: Bedrock product gate should not rewrite explicit `blocked_page`, `waiting_page`, or support-page results into `non_product_page`.
+13. **Require live generation smoke to bypass moto when Bedrock is the subject**: `moto` is acceptable for runtime storage/queue seams, but real URL keyword-generation verification should use direct fetch/classify/evidence/generate calls so Bedrock transport failures are not masked by the local harness.
+14. **Prefer minimal intermediate Bedrock contracts**: when the final API/export schema can be reconstructed deterministically, review Bedrock Step A prompts against the smallest viable payload first. Do not approve verbose first-pass JSON contracts that spend output tokens on fields the runtime can fill later.
+15. **Review under-generation fixes as adaptive batching decisions, not only token-budget decisions**: when one Bedrock pass stays sparse, prefer cluster-first generation with split-later escalation for weak clusters before approving permanent per-category fanout or large prompt bloat.
+16. **Require parse-failure observability in Bedrock reviews**: if live Bedrock output fails contract parsing, the failure artifact must retain raw `response_text`, model metadata, and the failed batch/stage context. Do not approve parser changes that turn live contract drift into opaque `ValueError` failures.
+17. **Treat lightweight wrapper drift as tolerance work before prompt work**: if live Bedrock returns semantically correct keyword payloads under `keywords[]` or similar lightweight wrappers, require parser tolerance before approving prompt-tightening as the primary fix.
+18. **Reject literal blacklist churn for category cleanup**: when noisy rows appear in `feature_attribute`, `season_event`, `problem_solution`, or `competitor_comparison`, require evidence-gating and shape admissibility tightening rather than approving one-off bad-string blocklists.
+19. **Reject handcrafted concern rewrites in deterministic generation**: if Codex maps raw concern evidence to preferred keyword phrases through case-by-case dictionaries, send it back. Formatting cleanup is acceptable; semantic rewriting by concern label is not.
+20. **Require semantic hardcoding cleanup to delete the old path, not just bypass it**: when a deterministic uplift helper or alias table is no longer acceptable, ask Codex to remove the helper and update tests/docs rather than leaving dead boost code in place.
+21. **Keep audience/use-case normalization formatting-only during review**: preserving whitespace-normalized observed phrasing is acceptable, but deterministic generation should not expand raw `audience` or `use_case` facts into category-led scaffolds like `<audience> <category>` or `<use_case> <category>`.
+22. **Require problem-slot seeds to remain concern-grounded**: if deterministic logic mixes `audience` or `usage_context` values into `problem_noun_phrase` seeds, send it back. Problem-slot expansion must start from explicit concern/problem evidence.
+21. **Reject product-name token folklore as category inference**: if deterministic generation infers canonical product categories from ad hoc token maps like `mask -> 스킨케어` or `earbud -> 무선 이어폰`, require an evidence-first fallback instead.
+22. **Reject audience-to-category auto-promotion in deterministic helpers**: broad audience evidence such as `건성 복합성 피부` should not be deterministically turned into category phrases like `건성 복합성 피부 마스크` unless the exact phrase is grounded on the page.

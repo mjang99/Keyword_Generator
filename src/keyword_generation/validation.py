@@ -11,6 +11,7 @@ from .constants import (
     URGENCY_BANNED_TERMS,
 )
 from .models import KeywordRow, PlatformMode, ValidationReport
+from .policy import keyword_policy_issues
 
 
 def validate_keyword_rows(
@@ -18,6 +19,7 @@ def validate_keyword_rows(
     *,
     requested_platform_mode: PlatformMode,
     quality_warning: bool,
+    evidence_pack: dict | None = None,
 ) -> ValidationReport:
     """Validate generated rows against the TASK-008 contract.
 
@@ -61,6 +63,17 @@ def validate_keyword_rows(
                 failure_detail=f"banned term emitted: {banned_term}",
                 quality_warning=quality_warning,
             )
+
+        if evidence_pack is not None:
+            invalid_row = _find_policy_violation(positive_rows + negative_rows, evidence_pack=evidence_pack)
+            if invalid_row is not None:
+                return ValidationReport(
+                    status="FAILED_GENERATION",
+                    requested_platform_mode=requested_platform_mode,
+                    failure_code="generation_rule_violation",
+                    failure_detail=invalid_row,
+                    quality_warning=quality_warning,
+                )
 
         per_category = defaultdict(int)
         weak_count = 0
@@ -163,4 +176,12 @@ def _find_banned_term(rows: list[KeywordRow]) -> str | None:
         for term in banned_terms:
             if term in haystack:
                 return term
+    return None
+
+
+def _find_policy_violation(rows: list[KeywordRow], *, evidence_pack: dict) -> str | None:
+    for row in rows:
+        issues = keyword_policy_issues(row, evidence_pack=evidence_pack)
+        if issues:
+            return f"{row.category}:{row.keyword}:{', '.join(issues)}"
     return None

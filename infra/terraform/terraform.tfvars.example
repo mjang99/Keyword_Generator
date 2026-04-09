@@ -24,7 +24,7 @@ zip_lambda_package_s3_key    = "keyword-generator/current.zip"
 
 bedrock_inference_profile_id = null
 bedrock_model_id             = null
-bedrock_max_tokens           = 3000
+bedrock_max_tokens           = 6000
 
 cache_validity_min_age_days      = 7
 cache_validity_schedule_expression = "rate(1 day)"
