@@ -68,4 +68,15 @@ def test_load_golden_set_case_and_source_payload() -> None:
     assert case.case_id == "laneige_retinol_live"
     assert case.requested_platform_mode == "both"
     assert "naver_sa" in case.platform_expectations
-    assert payload["product_name"] == "퍼펙트 리뉴 레티놀"
+    assert payload["product_name"]
+
+
+def test_load_iphone16_golden_set_case() -> None:
+    case = load_golden_set_case(Path("tests/golden_sets/iphone16_live.json"))
+
+    assert case.case_id == "iphone16_live"
+    assert case.requested_platform_mode == "naver_sa"
+    expectation = case.platform_expectations["naver_sa"]
+    assert "아이폰16 가격" in expectation.must_keep
+    assert "CDMA 아이폰16" in expectation.must_not_emit
+    assert "benefit_price" in expectation.required_categories

@@ -7,20 +7,51 @@ from src.collection.models import NormalizedPageSnapshot
 
 from .models import OcrDecision
 
-PROMO_TOKENS = ("할인", "쿠폰", "혜택", "이벤트", "sale", "offer", "benefit", "promo")
+PROMO_TOKENS = ("sale", "offer", "benefit", "promo", "coupon", "event", "discount")
 SPEC_TOKENS = (
     "spec",
     "specification",
-    "기술",
-    "사양",
-    "호환",
-    "배터리",
     "battery",
     "memory",
     "cpu",
+    "ingredient",
+    "ingredients",
+    "material",
+    "volume",
+    "capacity",
+    "compare",
+    "comparison",
+    "shade",
+    "size",
+)
+EXPLICIT_PRODUCT_FIELD_TOKENS = (
+    "제품명",
+    "품질표시사항",
+    "품질 표시 사항",
     "재질",
+    "제조국",
+    "원산지",
+    "수입원",
+    "판매원",
+    "제조",
+    "판매",
+    "가격",
+    "소비자가격",
+    "권장소비자가",
     "용량",
+    "중량",
+    "규격",
     "성분",
+    "전성분",
+    "원재료",
+    "재료",
+    "ingredient",
+    "ingredients",
+    "material",
+    "made in",
+    "price",
+    "volume",
+    "capacity",
 )
 REJECT_IMAGE_TOKENS = ("logo", "icon", "sprite", "badge", "thumbnail", "favicon")
 PRIORITY_IMAGE_TOKENS = ("hero", "gallery", "detail", "spec", "product", "slide", "main")
@@ -37,6 +68,15 @@ TABLE_IMAGE_TOKENS = (
     "size",
     "shade",
     "swatch",
+)
+FRONT_LABEL_TOKENS = (
+    "label",
+    "front",
+    "package",
+    "packaging",
+    "bottle",
+    "box",
+    "ingredient",
 )
 DETAIL_IMAGE_PATH_HINTS = (
     "/web/upload/webp/",
@@ -58,6 +98,9 @@ REJECT_IMAGE_PATH_TOKENS = (
     "icn-",
 )
 REJECT_IMAGE_TEMPLATE_TOKENS = ("'+", "+'", "${", "{{", "}}")
+MEASUREMENT_PATTERN = re.compile(r"\b\d+(?:\.\d+)?\s?(?:ml|g|kg|oz|inch|in|gb|tb|mah|hz|w|cm|mm)\b", re.IGNORECASE)
+CODELIKE_PATTERN = re.compile(r"\b(?:[a-z]{1,3}\d+[a-z0-9]*|\d+[a-z]{1,3}[a-z0-9]*)\b", re.IGNORECASE)
+TEXT_TERM_PATTERN = re.compile(r"[A-Za-z\uac00-\ud7a3]{4,}")
 
 
 def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
@@ -86,10 +129,22 @@ def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
             rejected_blocks=[],
             contribution_chars=0,
             image_results=image_results,
+            line_groups=[],
+            direct_fact_candidates=[],
+            same_product_metrics={"mean_same_product_score": 0.0, "mean_text_quality_score": 0.0, "direct_candidate_count": 0},
         )
 
-    admitted_blocks.sort(key=lambda item: (-float(item.get("score", 0.0)), item.get("text", "")))
-    image_results = _apply_block_counts(image_results, admitted_blocks, rejected_blocks)
+    admitted_blocks.sort(
+        key=lambda item: (
+            0 if item.get("direct_evidence_eligible") else 1,
+            -float(item.get("score", 0.0)),
+            item.get("text", ""),
+        )
+    )
+    line_groups = _build_line_groups(admitted_blocks)
+    direct_fact_candidates = _extract_direct_fact_candidates(line_groups)
+    image_results = _apply_block_counts(image_results, admitted_blocks, rejected_blocks, line_groups, direct_fact_candidates)
+    same_product_metrics = _same_product_metrics(admitted_blocks, direct_fact_candidates)
     return OcrDecision(
         status="AVAILABLE",
         trigger_reasons=trigger_reasons or ["fixture_ocr_blocks_present"],
@@ -98,6 +153,9 @@ def run_ocr_policy(snapshot: NormalizedPageSnapshot) -> OcrDecision:
         rejected_blocks=rejected_blocks,
         contribution_chars=sum(len(str(block.get("text", ""))) for block in admitted_blocks),
         image_results=image_results,
+        line_groups=line_groups,
+        direct_fact_candidates=direct_fact_candidates,
+        same_product_metrics=same_product_metrics,
     )
 
 
@@ -142,7 +200,7 @@ def _rank_image_candidates(snapshot: NormalizedPageSnapshot) -> list[dict[str, A
         height = _int_value(candidate.get("height"))
         lower_src = src.lower()
         lower_alt = alt.lower()
-        candidate_type = _candidate_type(lower_src, lower_alt)
+        candidate_type = _candidate_type(lower_src, lower_alt, width=width, height=height, detail_hint=bool(candidate.get("detail_hint")))
         rejected_reason = _reject_image_reason(
             src=src,
             alt=alt,
@@ -154,34 +212,87 @@ def _rank_image_candidates(snapshot: NormalizedPageSnapshot) -> list[dict[str, A
         if rejected_reason:
             continue
 
+        reason_codes: list[str] = []
         score = 0.0
         if width and height:
             area = width * height
             if area >= 300 * 300:
                 score += min(area / 1_000_000, 1.5)
+                reason_codes.append("area")
         else:
             score += 0.25
+            reason_codes.append("unknown_size")
 
         if any(token in lower_src or token in lower_alt for token in PRIORITY_IMAGE_TOKENS):
             score += 0.35
+            reason_codes.append("priority_token")
         if candidate.get("detail_hint") or any(token in lower_src for token in DETAIL_IMAGE_PATH_HINTS):
             score += 1.4
+            reason_codes.append("detail_hint")
         if str(candidate.get("attribute", "")).lower() != "src":
             score += 0.2
+            reason_codes.append("lazy_attribute")
         if lower_src.endswith(".webp"):
             score += 0.15
+            reason_codes.append("webp")
 
         token_overlap = len(_matching_tokens(tokens, f"{lower_alt} {lower_src}"))
-        score += min(token_overlap * 0.18, 0.72)
+        if token_overlap:
+            score += min(token_overlap * 0.18, 0.72)
+            reason_codes.append("token_overlap")
         score += max(0.0, 0.15 - index * 0.02)
+
+        estimated_text_density = _estimated_text_density(candidate_type, lower_src, lower_alt, width=width, height=height)
+        score += estimated_text_density * 0.45
+        if estimated_text_density >= 0.5:
+            reason_codes.append("text_density")
+        if candidate_type == "long_detail_banner":
+            score += 0.45
+            reason_codes.append("long_detail_banner")
+        elif candidate_type == "table_like_image":
+            score += 0.55
+            reason_codes.append("table_like")
+        elif candidate_type == "front_label_closeup":
+            score += 0.25
+            reason_codes.append("front_label")
 
         normalized["score"] = round(score, 4)
         normalized["candidate_type"] = candidate_type
+        normalized["estimated_text_density"] = round(estimated_text_density, 4)
+        normalized["needs_tiling"] = candidate_type == "long_detail_banner"
+        normalized["selection_reason_codes"] = reason_codes
         normalized["ocr_pipeline_type"] = "structured_table" if candidate_type == "table_like_image" else "plain_text"
         ranked.append(normalized)
 
     ranked.sort(key=lambda item: (-float(item["score"]), str(item.get("src", ""))))
+    for priority_rank, candidate in enumerate(ranked, start=1):
+        candidate["same_page_priority_rank"] = priority_rank
     return ranked
+
+
+def _estimated_text_density(
+    candidate_type: str,
+    lower_src: str,
+    lower_alt: str,
+    *,
+    width: int | None,
+    height: int | None,
+) -> float:
+    density = 0.15
+    combined = f"{lower_src} {lower_alt}"
+    if candidate_type == "table_like_image":
+        density += 0.55
+    elif candidate_type == "long_detail_banner":
+        density += 0.35
+    elif candidate_type == "front_label_closeup":
+        density += 0.25
+    if any(token in combined for token in SPEC_TOKENS):
+        density += 0.2
+    if any(token in combined for token in FRONT_LABEL_TOKENS):
+        density += 0.12
+    if width and height and min(width, height) >= 900:
+        density += 0.08
+    return min(density, 1.0)
 
 
 def _reject_image_reason(
@@ -226,12 +337,25 @@ def _detail_image_candidate_present(snapshot: NormalizedPageSnapshot) -> bool:
     return False
 
 
-def _candidate_type(lower_src: str, lower_alt: str) -> str:
+def _candidate_type(
+    lower_src: str,
+    lower_alt: str,
+    *,
+    width: int | None,
+    height: int | None,
+    detail_hint: bool,
+) -> str:
     combined = f"{lower_src} {lower_alt}"
+    if width and height and height >= max(width * 2.2, 1200):
+        return "long_detail_banner"
     if any(token in combined for token in TABLE_IMAGE_TOKENS):
         return "table_like_image"
-    if len(re.findall(r"\b(?:[a-z]{1,3}\d+[a-z0-9]*|\d+[a-z]{1,3}[a-z0-9]*)\b", combined, re.IGNORECASE)) >= 2:
+    if len(CODELIKE_PATTERN.findall(combined)) >= 2:
         return "table_like_image"
+    if any(token in combined for token in FRONT_LABEL_TOKENS):
+        return "front_label_closeup"
+    if width and height and detail_hint and max(width, height) <= 1100:
+        return "front_label_closeup"
     return "general_detail_image"
 
 
@@ -256,13 +380,25 @@ def _build_image_results(
                 "image_attribute": result.get("image_attribute", candidate.get("attribute")),
                 "image_score": result.get("image_score", candidate.get("score")),
                 "candidate_type": result.get("candidate_type", candidate.get("candidate_type", "general_detail_image")),
+                "selection_reason_codes": list(result.get("selection_reason_codes", candidate.get("selection_reason_codes", []))),
+                "estimated_text_density": result.get("estimated_text_density", candidate.get("estimated_text_density")),
+                "needs_tiling": bool(result.get("needs_tiling", candidate.get("needs_tiling", False))),
                 "pipeline_type": result.get("pipeline_type", candidate.get("ocr_pipeline_type", "plain_text")),
                 "engine_used": result.get("engine_used"),
+                "recognizer_lang": result.get("recognizer_lang"),
+                "preprocessing_variant": result.get("preprocessing_variant"),
+                "tile_mode": result.get("tile_mode"),
+                "tile_count": int(result.get("tile_count", 1) or 1),
+                "ocr_passes": list(result.get("ocr_passes", [])),
                 "status": result.get("status", "pending"),
                 "raw_block_count": int(result.get("raw_block_count", 0) or 0),
                 "raw_char_count": int(result.get("raw_char_count", 0) or 0),
                 "admitted_block_count": int(result.get("admitted_block_count", 0) or 0),
                 "rejected_block_count": int(result.get("rejected_block_count", 0) or 0),
+                "line_group_count": int(result.get("line_group_count", 0) or 0),
+                "direct_fact_candidate_count": int(result.get("direct_fact_candidate_count", 0) or 0),
+                "mean_same_product_score": float(result.get("mean_same_product_score", 0.0) or 0.0),
+                "runtime_ms": int(result.get("runtime_ms", 0) or 0),
                 "error": result.get("error"),
             }
         )
@@ -273,24 +409,42 @@ def _apply_block_counts(
     image_results: list[dict[str, Any]],
     admitted_blocks: list[dict[str, Any]],
     rejected_blocks: list[dict[str, Any]],
+    line_groups: list[dict[str, Any]],
+    direct_fact_candidates: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     admitted_by_src: dict[str, int] = {}
     rejected_by_src: dict[str, int] = {}
+    group_by_src: dict[str, int] = {}
+    direct_by_src: dict[str, int] = {}
+    same_product_scores: dict[str, list[float]] = {}
     for block in admitted_blocks:
         src = str(block.get("image_src", "")).strip()
         if src:
             admitted_by_src[src] = admitted_by_src.get(src, 0) + 1
+            same_product_scores.setdefault(src, []).append(float(block.get("same_product_score", 0.0) or 0.0))
     for block in rejected_blocks:
         src = str(block.get("image_src", "")).strip()
         if src:
             rejected_by_src[src] = rejected_by_src.get(src, 0) + 1
+    for group in line_groups:
+        src = str(group.get("image_src", "")).strip()
+        if src:
+            group_by_src[src] = group_by_src.get(src, 0) + 1
+    for group in direct_fact_candidates:
+        src = str(group.get("image_src", "")).strip()
+        if src:
+            direct_by_src[src] = direct_by_src.get(src, 0) + 1
 
     normalized_results: list[dict[str, Any]] = []
     for result in image_results:
         updated = dict(result)
         src = str(updated.get("image_src", "")).strip()
+        scores = same_product_scores.get(src, [])
         updated["admitted_block_count"] = admitted_by_src.get(src, 0)
         updated["rejected_block_count"] = rejected_by_src.get(src, 0)
+        updated["line_group_count"] = group_by_src.get(src, 0)
+        updated["direct_fact_candidate_count"] = direct_by_src.get(src, 0)
+        updated["mean_same_product_score"] = round(sum(scores) / len(scores), 4) if scores else 0.0
         normalized_results.append(updated)
     return normalized_results
 
@@ -299,41 +453,56 @@ def _admit_block(block: dict[str, Any], snapshot: NormalizedPageSnapshot) -> tup
     normalized = dict(block)
     text = _extract_block_text(block)
     normalized["text"] = text
-    normalized["score"] = round(_block_score(text, snapshot, block), 4)
+    tokens = _token_set(snapshot)
+    matched_tokens = _matching_tokens(tokens, text.lower())
+    text_quality_score = round(_text_quality_score(text, matched_tokens, block), 4)
+    same_product_score = round(_same_product_score(text, matched_tokens, snapshot, block), 4)
+    layout_trust_score = round(_layout_trust_score(block), 4)
+    normalized["matched_tokens"] = matched_tokens
+    normalized["text_quality_score"] = text_quality_score
+    normalized["same_product_score"] = same_product_score
+    normalized["layout_trust_score"] = layout_trust_score
+    normalized["score"] = round((text_quality_score * 0.45) + (same_product_score * 0.35) + (layout_trust_score * 0.2), 4)
 
     if not text:
         normalized["rejection_reason"] = "empty_text"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
     if _mostly_numeric_junk(text):
         normalized["rejection_reason"] = "mostly_numeric_junk"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
     if _mostly_brand_repetition(text, snapshot):
         normalized["rejection_reason"] = "brand_only_repetition"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
     if _duplicate_of_html_text(text, snapshot.decoded_text or ""):
         normalized["rejection_reason"] = "duplicate_of_direct_html"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
 
-    tokens = _token_set(snapshot)
-    matched_tokens = _matching_tokens(tokens, text.lower())
     has_minimum_content = (
         len(text) >= 30
         or len(matched_tokens) >= 2
+        or _has_explicit_product_field(text)
         or _should_preserve_short_image_block(text, matched_tokens, block)
     )
     if not has_minimum_content:
         normalized["rejection_reason"] = "too_short_without_product_tokens"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
 
     if _contains_unrelated_product_names(text, matched_tokens, snapshot, block):
         normalized["rejection_reason"] = "unrelated_product_names"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
 
     if any(token in text.lower() for token in PROMO_TOKENS) and not matched_tokens:
         normalized["rejection_reason"] = "promo_not_tied_to_product"
+        normalized["direct_evidence_eligible"] = False
         return False, normalized
 
-    normalized["matched_tokens"] = matched_tokens
+    normalized["direct_evidence_eligible"] = _direct_evidence_eligible(normalized)
     return True, normalized
 
 
@@ -345,23 +514,223 @@ def _extract_block_text(block: dict[str, Any]) -> str:
     return ""
 
 
-def _block_score(text: str, snapshot: NormalizedPageSnapshot, block: dict[str, Any]) -> float:
+def _text_quality_score(text: str, matched_tokens: list[str], block: dict[str, Any]) -> float:
     lowered = text.lower()
-    matched_tokens = _matching_tokens(_token_set(snapshot), lowered)
-    score = min(len(text) / 120.0, 0.8)
-    score += min(len(matched_tokens) * 0.2, 1.0)
+    score = min(len(text) / 120.0, 0.55)
+    score += min(len(matched_tokens) * 0.14, 0.28)
     if any(token in lowered for token in SPEC_TOKENS):
+        score += 0.12
+    if MEASUREMENT_PATTERN.search(text):
+        score += 0.12
+    alpha_terms = TEXT_TERM_PATTERN.findall(text)
+    if len(alpha_terms) >= 2:
+        score += 0.08
+    if block.get("pipeline_type") == "structured_table":
+        score += 0.08
+    if block.get("preprocessing_variant") not in {None, "", "original"}:
+        score += 0.03
+    return min(score, 1.0)
+
+
+def _same_product_score(
+    text: str,
+    matched_tokens: list[str],
+    snapshot: NormalizedPageSnapshot,
+    block: dict[str, Any],
+) -> float:
+    lowered = text.lower()
+    score = 0.0
+    if matched_tokens:
+        score += min(0.3 + len(matched_tokens) * 0.18, 0.72)
+    product_name = str(snapshot.product_name or "").strip().lower()
+    if product_name and product_name in lowered:
         score += 0.25
-    if block.get("source") == "screenshot":
-        score += 0.1
-    return score
+    product_terms = [term for term in re.findall(r"[A-Za-z0-9\uac00-\ud7a3.+-]{2,}", product_name) if len(term) >= 4]
+    overlapping_terms = sum(1 for term in product_terms if term.lower() in lowered)
+    if overlapping_terms:
+        score += min(overlapping_terms * 0.08, 0.2)
+    if _has_explicit_product_field(text):
+        score += 0.28
+        if snapshot.page_class_hint in {"commerce_pdp", "image_heavy_commerce_pdp"}:
+            score += 0.08
+        candidate_type = str(block.get("candidate_type", "") or "")
+        if candidate_type in {"front_label_closeup", "long_detail_banner", "table_like_image"}:
+            score += 0.06
+    return min(score, 1.0)
+
+
+def _layout_trust_score(block: dict[str, Any]) -> float:
+    candidate_type = str(block.get("candidate_type", "general_detail_image") or "general_detail_image")
+    if candidate_type == "table_like_image":
+        score = 0.85
+    elif candidate_type == "long_detail_banner":
+        score = 0.74
+    elif candidate_type == "front_label_closeup":
+        score = 0.8
+    else:
+        score = 0.66
+    if block.get("pipeline_type") == "structured_table":
+        score += 0.08
+    if block.get("tile_mode") == "vertical":
+        score += 0.05
+    if block.get("preprocessing_variant") not in {None, "", "original"}:
+        score += 0.03
+    return min(score, 1.0)
+
+
+def _direct_evidence_eligible(block: dict[str, Any]) -> bool:
+    same_product_score = float(block.get("same_product_score", 0.0) or 0.0)
+    text_quality_score = float(block.get("text_quality_score", 0.0) or 0.0)
+    layout_trust_score = float(block.get("layout_trust_score", 0.0) or 0.0)
+    text = str(block.get("text", ""))
+    candidate_type = str(block.get("candidate_type", "") or "")
+    if same_product_score >= 0.45 and text_quality_score >= 0.35 and layout_trust_score >= 0.6:
+        return True
+    if _has_explicit_product_field(text) and same_product_score >= 0.28 and text_quality_score >= 0.18 and layout_trust_score >= 0.6:
+        return True
+    if candidate_type == "table_like_image" and layout_trust_score >= 0.8 and (MEASUREMENT_PATTERN.search(text) or any(token in text.lower() for token in SPEC_TOKENS)):
+        return True
+    return False
+
+
+def _build_line_groups(admitted_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not admitted_blocks:
+        return []
+    ordered = sorted(
+        admitted_blocks,
+        key=lambda item: (
+            str(item.get("image_src", "")),
+            int(item.get("tile_index", 0) or 0),
+            int(item.get("block_order", 0) or 0),
+        ),
+    )
+    groups: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    for block in ordered:
+        if not current:
+            current = [block]
+            continue
+        if _should_merge_into_group(current, block):
+            current.append(block)
+            continue
+        groups.append(_make_line_group(current))
+        current = [block]
+    if current:
+        groups.append(_make_line_group(current))
+    return groups
+
+
+def _should_merge_into_group(current: list[dict[str, Any]], block: dict[str, Any]) -> bool:
+    first = current[0]
+    if str(first.get("image_src", "")) != str(block.get("image_src", "")):
+        return False
+    if int(first.get("tile_index", 0) or 0) != int(block.get("tile_index", 0) or 0):
+        return False
+    if str(first.get("candidate_type", "")) == "table_like_image":
+        return False
+    if len(current) >= 3:
+        return False
+    current_text = " ".join(str(item.get("text", "")) for item in current).strip()
+    next_text = str(block.get("text", ""))
+    if len(current_text) + len(next_text) > 96:
+        return False
+    shortish_current = all(len(str(item.get("text", ""))) <= 32 for item in current)
+    return shortish_current and len(next_text) <= 32
+
+
+def _make_line_group(blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    text = " ".join(str(block.get("text", "")).strip() for block in blocks if str(block.get("text", "")).strip()).strip()
+    matched_tokens = sorted(
+        {
+            token
+            for block in blocks
+            for token in block.get("matched_tokens", [])
+            if isinstance(token, str) and token.strip()
+        }
+    )
+    group_like_block = {
+        "pipeline_type": blocks[0].get("pipeline_type"),
+        "preprocessing_variant": blocks[0].get("preprocessing_variant"),
+    }
+    text_quality_score = max(
+        max(float(block.get("text_quality_score", 0.0) or 0.0) for block in blocks),
+        _text_quality_score(text, matched_tokens, group_like_block),
+    )
+    same_product_score = max(float(block.get("same_product_score", 0.0) or 0.0) for block in blocks)
+    layout_trust_score = max(float(block.get("layout_trust_score", 0.0) or 0.0) for block in blocks)
+    group = {
+        "text": text,
+        "image_src": blocks[0].get("image_src"),
+        "candidate_type": blocks[0].get("candidate_type"),
+        "pipeline_type": blocks[0].get("pipeline_type"),
+        "block_count": len(blocks),
+        "matched_tokens": matched_tokens,
+        "text_quality_score": round(text_quality_score, 4),
+        "same_product_score": round(same_product_score, 4),
+        "layout_trust_score": round(layout_trust_score, 4),
+    }
+    group["direct_evidence_eligible"] = any(bool(block.get("direct_evidence_eligible")) for block in blocks) or _direct_evidence_eligible(group)
+    return group
+
+
+def _extract_direct_fact_candidates(line_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for index, group in enumerate(line_groups, start=1):
+        if not group.get("direct_evidence_eligible"):
+            continue
+        text = str(group.get("text", "")).strip()
+        lowered = text.lower()
+        if not text:
+            continue
+        if any(token in lowered for token in PROMO_TOKENS) and not group.get("matched_tokens"):
+            continue
+        if float(group.get("same_product_score", 0.0) or 0.0) < 0.45 and not (
+            str(group.get("candidate_type", "")) == "table_like_image"
+            and (MEASUREMENT_PATTERN.search(text) or any(token in lowered for token in SPEC_TOKENS))
+        ) and not (
+            _has_explicit_product_field(text)
+            and float(group.get("same_product_score", 0.0) or 0.0) >= 0.28
+        ):
+            continue
+        candidates.append(
+            {
+                **dict(group),
+                "candidate_id": f"ocr_direct_{index:03d}",
+                "source_type": "ocr_line_group",
+            }
+        )
+    return candidates
+
+
+def _same_product_metrics(
+    admitted_blocks: list[dict[str, Any]],
+    direct_fact_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not admitted_blocks:
+        return {
+            "mean_same_product_score": 0.0,
+            "mean_text_quality_score": 0.0,
+            "direct_candidate_count": len(direct_fact_candidates),
+        }
+    same_product_scores = [float(block.get("same_product_score", 0.0) or 0.0) for block in admitted_blocks]
+    text_quality_scores = [float(block.get("text_quality_score", 0.0) or 0.0) for block in admitted_blocks]
+    return {
+        "mean_same_product_score": round(sum(same_product_scores) / len(same_product_scores), 4),
+        "mean_text_quality_score": round(sum(text_quality_scores) / len(text_quality_scores), 4),
+        "direct_candidate_count": len(direct_fact_candidates),
+    }
+
+
+def _has_explicit_product_field(text: str) -> bool:
+    lowered = text.lower()
+    return any(token.lower() in lowered for token in EXPLICIT_PRODUCT_FIELD_TOKENS)
 
 
 def _mostly_numeric_junk(text: str) -> bool:
     stripped = re.sub(r"\s+", "", text)
     if not stripped:
         return True
-    alnum = re.findall(r"[A-Za-z0-9가-힣]", stripped)
+    alnum = re.findall(r"[A-Za-z0-9\uac00-\ud7a3]", stripped)
     if not alnum:
         return True
     digit_ratio = sum(char.isdigit() for char in alnum) / len(alnum)
@@ -369,7 +738,7 @@ def _mostly_numeric_junk(text: str) -> bool:
 
 
 def _mostly_brand_repetition(text: str, snapshot: NormalizedPageSnapshot) -> bool:
-    words = re.findall(r"[A-Za-z0-9가-힣]+", text.lower())
+    words = re.findall(r"[A-Za-z0-9\uac00-\ud7a3]+", text.lower())
     if len(words) < 3:
         return False
     unique_words = set(words)
@@ -414,16 +783,14 @@ def _should_preserve_short_image_block(
         return False
     if matched_tokens:
         return True
-    alpha_terms = re.findall(r"[A-Za-z\uac00-\ud7a3]{4,}", text)
+    alpha_terms = TEXT_TERM_PATTERN.findall(text)
     if len(alpha_terms) >= 2:
         return True
     if len(alpha_terms) == 1 and len(alpha_terms[0]) >= 8:
         return True
-    if block.get("candidate_type") == "table_like_image" and re.search(
-        r"\b(?:[a-z]{1,3}\d+[a-z0-9]*|\d+[a-z]{1,3}[a-z0-9]*)\b",
-        text,
-        re.IGNORECASE,
-    ):
+    if MEASUREMENT_PATTERN.search(text):
+        return True
+    if block.get("candidate_type") == "table_like_image" and CODELIKE_PATTERN.search(text):
         return True
     return False
 
@@ -431,7 +798,7 @@ def _should_preserve_short_image_block(
 def _token_set(snapshot: NormalizedPageSnapshot) -> set[str]:
     seeds = list(snapshot.primary_product_tokens)
     if snapshot.product_name:
-        seeds.extend(re.findall(r"[A-Za-z0-9가-힣][A-Za-z0-9가-힣.+-]{1,}", snapshot.product_name))
+        seeds.extend(re.findall(r"[A-Za-z0-9\uac00-\ud7a3.+-]{2,}", snapshot.product_name))
     tokens = {
         token.lower()
         for token in seeds

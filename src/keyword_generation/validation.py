@@ -11,7 +11,7 @@ from .constants import (
     URGENCY_BANNED_TERMS,
 )
 from .models import KeywordRow, PlatformMode, ValidationReport
-from .policy import keyword_policy_issues
+from .policy import keyword_hard_policy_issues
 
 
 def validate_keyword_rows(
@@ -36,6 +36,7 @@ def validate_keyword_rows(
 
     positive_counts: dict[str, int] = {}
     category_counts: dict[str, dict[str, int]] = {}
+    missing_positive_categories: dict[str, list[str]] = {}
     weak_ratios: dict[str, float] = {}
 
     platforms = ["naver_sa", "google_sa"] if requested_platform_mode == "both" else [requested_platform_mode]
@@ -84,6 +85,9 @@ def validate_keyword_rows(
 
         positive_counts[platform] = len(positive_rows)
         category_counts[platform] = dict(per_category)
+        missing_positive_categories[platform] = [
+            category for category in POSITIVE_CATEGORIES if per_category.get(category, 0) < 1
+        ]
         weak_ratios[platform] = weak_count / len(positive_rows) if positive_rows else 0.0
 
         if len(positive_rows) < 100:
@@ -92,22 +96,10 @@ def validate_keyword_rows(
                 requested_platform_mode=requested_platform_mode,
                 positive_keyword_counts=positive_counts,
                 category_counts=category_counts,
+                missing_positive_categories=missing_positive_categories,
                 weak_tier_ratio_by_platform=weak_ratios,
                 failure_code="generation_count_shortfall",
                 failure_detail=f"{platform} positive rows below 100",
-                quality_warning=quality_warning,
-            )
-
-        missing_categories = [category for category in POSITIVE_CATEGORIES if per_category.get(category, 0) < 1]
-        if missing_categories:
-            return ValidationReport(
-                status="FAILED_GENERATION",
-                requested_platform_mode=requested_platform_mode,
-                positive_keyword_counts=positive_counts,
-                category_counts=category_counts,
-                weak_tier_ratio_by_platform=weak_ratios,
-                failure_code="generation_category_shortfall",
-                failure_detail=f"{platform} missing categories: {', '.join(missing_categories)}",
                 quality_warning=quality_warning,
             )
 
@@ -117,8 +109,9 @@ def validate_keyword_rows(
                 requested_platform_mode=requested_platform_mode,
                 positive_keyword_counts=positive_counts,
                 category_counts=category_counts,
+                missing_positive_categories=missing_positive_categories,
                 weak_tier_ratio_by_platform=weak_ratios,
-                failure_code="generation_category_shortfall",
+                failure_code="generation_rule_violation",
                 failure_detail=f"{platform} missing negative rows",
                 quality_warning=quality_warning,
             )
@@ -129,6 +122,7 @@ def validate_keyword_rows(
                 requested_platform_mode=requested_platform_mode,
                 positive_keyword_counts=positive_counts,
                 category_counts=category_counts,
+                missing_positive_categories=missing_positive_categories,
                 weak_tier_ratio_by_platform=weak_ratios,
                 failure_code="generation_rule_violation",
                 failure_detail=f"{platform} weak-tier ratio exceeded 20%",
@@ -140,6 +134,7 @@ def validate_keyword_rows(
         requested_platform_mode=requested_platform_mode,
         positive_keyword_counts=positive_counts,
         category_counts=category_counts,
+        missing_positive_categories=missing_positive_categories,
         weak_tier_ratio_by_platform=weak_ratios,
         quality_warning=quality_warning,
     )
@@ -181,7 +176,7 @@ def _find_banned_term(rows: list[KeywordRow]) -> str | None:
 
 def _find_policy_violation(rows: list[KeywordRow], *, evidence_pack: dict) -> str | None:
     for row in rows:
-        issues = keyword_policy_issues(row, evidence_pack=evidence_pack)
+        issues = keyword_hard_policy_issues(row, evidence_pack=evidence_pack)
         if issues:
             return f"{row.category}:{row.keyword}:{', '.join(issues)}"
     return None

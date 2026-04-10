@@ -2,7 +2,8 @@ from __future__ import annotations
 
 # Over-generation target: produce more candidates than the floor to absorb semantic dedup loss.
 # The LLM dedup+quality pass (step B) will reduce this to the quality-passing subset.
-INITIAL_GENERATION_TARGET: int = 130
+# Raised for sparse live PDPs where quality-preserving dedup and hard-rule cleanup were leaving too few survivors.
+INITIAL_GENERATION_TARGET: int = 160
 
 POSITIVE_CATEGORY_TARGETS: dict[str, int] = {
     "brand": 10,

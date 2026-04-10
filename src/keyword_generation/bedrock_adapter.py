@@ -58,6 +58,103 @@ _DIRECT_VALUE_SIGNAL_TERMS = (
 )
 
 
+def _unique_prompt_texts(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        cleaned = " ".join(str(value or "").split()).strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(cleaned)
+    return unique
+
+
+def _weak_category_prompt_examples(
+    interpretation: dict[str, Any],
+    *,
+    target_categories: list[str],
+) -> dict[str, dict[str, list[str]]]:
+    canonical_category = " ".join(str(interpretation.get("canonical_category") or "").split()).strip()
+    brand = " ".join(str(interpretation.get("brand") or "").split()).strip()
+    product_name = " ".join(str(interpretation.get("product_name") or "").split()).strip()
+    concerns = _unique_prompt_texts(list(interpretation.get("concerns") or []))
+    usage_context = _unique_prompt_texts(list(interpretation.get("usage_context") or []))
+    audience = _unique_prompt_texts(list(interpretation.get("audience") or []))
+    grounded_event_terms = _unique_prompt_texts(list(interpretation.get("grounded_event_terms") or []))
+    competitor_hints = _unique_prompt_texts(
+        list((interpretation.get("comparison_policy") or {}).get("competitor_brand_hints") or [])
+    )
+
+    def with_category(values: list[str]) -> list[str]:
+        if not canonical_category:
+            return _unique_prompt_texts(values)
+        return _unique_prompt_texts([f"{value} {canonical_category}" for value in values if value])
+
+    examples: dict[str, dict[str, list[str]]] = {}
+    for category in target_categories:
+        if category == "problem_solution":
+            positive = with_category(concerns[:3] or usage_context[:2])
+            negative = _unique_prompt_texts(
+                [
+                    f"{product_name} 관리" if product_name else "",
+                    f"{canonical_category} 해결" if canonical_category else "",
+                    f"{product_name} 고민 해결" if product_name else "",
+                ]
+            )
+        elif category == "season_event":
+            seasonal_seed = grounded_event_terms[:2] or usage_context[:2]
+            positive = with_category(seasonal_seed)
+            negative = _unique_prompt_texts(
+                [
+                    f"무료배송 {canonical_category}" if canonical_category else "",
+                    f"빠른배송 {canonical_category}" if canonical_category else "",
+                    f"{product_name} 일상용" if product_name else "",
+                ]
+            )
+        elif category == "long_tail":
+            long_tail_seed = usage_context[:2] + audience[:2] + concerns[:1]
+            positive = with_category(long_tail_seed)
+            negative = _unique_prompt_texts(
+                [
+                    f"{product_name} 사용" if product_name else "",
+                    f"{product_name} 추천" if product_name else "",
+                    f"{canonical_category} 구매 이유" if canonical_category else "",
+                ]
+            )
+        elif category == "competitor_comparison":
+            positive = _unique_prompt_texts(
+                [
+                    f"{competitor} {canonical_category}"
+                    for competitor in competitor_hints[:3]
+                    if competitor and canonical_category
+                ]
+                + [
+                    f"{competitor} {canonical_category} 비교"
+                    for competitor in competitor_hints[:2]
+                    if competitor and canonical_category
+                ]
+            )
+            negative = _unique_prompt_texts(
+                [
+                    f"{brand} {canonical_category} 비교" if brand and canonical_category else "",
+                    f"{product_name} 용량 비교" if product_name else "",
+                    f"{canonical_category} 가격 비교" if canonical_category else "",
+                ]
+            )
+        else:
+            continue
+        if positive or negative:
+            examples[category] = {
+                "good": positive[:5],
+                "bad": negative[:5],
+            }
+    return examples
+
+
 class BedrockResponseParseError(ValueError):
     def __init__(
         self,
@@ -241,6 +338,10 @@ def build_keyword_generation_prompt(
     negative_required = NEGATIVE_CATEGORY in target_categories
     positive_categories = [category for category in target_categories if category != NEGATIVE_CATEGORY]
     category_enum = positive_categories + ([NEGATIVE_CATEGORY] if negative_required else [])
+    weak_category_examples = _weak_category_prompt_examples(
+        interpretation,
+        target_categories=positive_categories,
+    )
     instructions = {
         "requested_platform_mode": request.requested_platform_mode,
         "generation_mode": "category_slot_filling",
@@ -262,6 +363,20 @@ def build_keyword_generation_prompt(
             "shared_render_default": True,
             "fill_slots_not_freeform_lists": True,
         },
+        "buyer_query_contract": [
+            "Generate only keyword phrases that a real buyer of this exact product page would plausibly search.",
+            "Prefer queries that this exact PDP can satisfy directly, not broad curiosity or adjacent product research.",
+            "Prioritize model-specific queries over lineup-wide or brand-wide queries.",
+            "Prioritize model plus price, storage, color, or shopper-facing variant queries over broad product-class phrases.",
+            "Before finalizing each keyword, check whether a real buyer would type it and whether this PDP directly satisfies that query. Drop the keyword if either answer is no.",
+            "If a category is weakly supported, emit fewer keywords instead of weak or filler variants.",
+        ],
+        "generic_category_contract": [
+            "Generic-category keywords must be common shopper-facing product-class phrases, not arbitrary rewrites of attributes into category labels.",
+            "Prefer broad product-class phrases that a buyer would naturally search, such as smartphone, phone case, or frozen chicken breast, only when the PDP directly supports that class.",
+            "Do not create generic-category phrases by attaching colors, flavor names, pack sizes, storage amounts, or weak attributes to the product class unless that phrasing is itself a common shopper query.",
+            "Do not turn storage, convenience, or preservation language into outing, travel, picnic, camping, or other situational category phrases unless those exact situations are explicitly grounded on the page.",
+        ],
         "surface_form_prohibitions": [
             "Do not emit checklist or consultation scaffolds such as '구매 전 체크', '구매 준비', '구매 상담', '구매 문의', '구매 타이밍', or '결제 옵션'.",
             "Do not emit reason-to-buy scaffolds such as '필요 이유', '고민 해결', or generic '* 해결' phrasing.",
@@ -272,6 +387,7 @@ def build_keyword_generation_prompt(
             "Do not emit unsupported promo-event surfaces such as Black Friday or Cyber Monday unless those exact events are grounded in admitted evidence.",
             "Price rows must be search-like noun phrases such as '<price band> + product type' or '<product name> 가격'. Do not emit raw exact price numbers such as '149000' or '149,000원'.",
             "Do not emit product-name plus purpose suffix surfaces such as 'Apple Pencil 그림용'. Use generic category-led phrasing only when it sounds like a real search query.",
+            "Do not turn colors or weak attributes into generic product-class phrases such as '<color> smartphone' or similar color-plus-category surfaces.",
             "Feature-attribute rows must stay grounded in admitted specs, variants, ingredients, technology, or form-factor evidence. Do not emit ecosystem names, standalone services, or isolated standards as product features.",
             "Season-event rows must stay grounded in admitted event terms or explicit usage context. Do not turn logistics, shipping incentives, or generic merchandising language into season/event keywords.",
             "Problem-solution rows must stay grounded in admitted concern or use-case evidence. Do not infer hypothetical shortcomings or dissatisfaction from product specs alone.",
@@ -287,6 +403,7 @@ def build_keyword_generation_prompt(
             "Use the positive_category_targets as the ideal mix for the final surviving set, but express that mix through slot completion.",
             "Do not skip a category just because deterministic defaults would be thin; synthesize commercially plausible noun-phrase search surfaces directly from admitted evidence facets.",
         ],
+        "category_examples": weak_category_examples,
         "output_schema": {
             "items": [
                 {
@@ -412,6 +529,11 @@ def build_supplementation_prompt(
     # Provide a summary of already-surviving keywords so the LLM avoids re-generating them.
     gap_slots = {k: v for k, v in gap_slots.items() if k != "_total" and v > 0}
     used_token_clusters = _used_token_clusters(surviving_summary or [], evidence_pack=evidence_pack)
+    weak_target_categories = sorted({str(key).split(":", 1)[0] for key in gap_slots})
+    weak_category_examples = _weak_category_prompt_examples(
+        interpretation,
+        target_categories=weak_target_categories,
+    )
     instructions = {
         "task": "supplementation",
         "platform_mode": platform_mode,
@@ -459,6 +581,7 @@ def build_supplementation_prompt(
             "Do not emit generic comparison rows without a competitor brand.",
             "Do not emit same-product measurement comparisons such as '70ml 25ml 비교' or '용량 비교'.",
         ],
+        "category_examples": weak_category_examples,
         "already_overused_terms": used_token_clusters,
         "already_surviving_count": len(surviving_summary or []),
         "already_surviving_sample": (surviving_summary or [])[:20],
@@ -568,12 +691,16 @@ def parse_dedup_quality_response(
         if original is None and keyword:
             original = candidate_map.get(_intent_id_from_fields(str(item.get("category") or ""), keyword))
         if original is not None:
+            original.quality_score = str(item.get("quality_score") or "").strip() or None
+            original.quality_reason = str(item.get("quality_reason") or item.get("reason") or "").strip() or None
             surviving.append(original)
         else:
             # LLM may have slightly altered intent_text; do a best-effort match
             for candidate in candidate_map.values():
                 candidate_text = candidate.intent_text
                 if keyword and (keyword in candidate_text or candidate_text in keyword):
+                    candidate.quality_score = str(item.get("quality_score") or "").strip() or None
+                    candidate.quality_reason = str(item.get("quality_reason") or item.get("reason") or "").strip() or None
                     surviving.append(candidate)
                     break
 
@@ -807,6 +934,10 @@ def intents_to_rows(
                     reason=reason,
                     quality_warning=quality_warning,
                     evidence_tier=intent.evidence_tier,
+                    quality_score=intent.quality_score,
+                    quality_reason=intent.quality_reason,
+                    selection_score=intent.selection_score,
+                    soft_penalties=intent.soft_penalties,
                 )
             )
             continue
@@ -824,6 +955,10 @@ def intents_to_rows(
                     reason=reason,
                     quality_warning=quality_warning,
                     evidence_tier=intent.evidence_tier,
+                    quality_score=intent.quality_score,
+                    quality_reason=intent.quality_reason,
+                    selection_score=intent.selection_score,
+                    soft_penalties=intent.soft_penalties,
                 )
             )
         if include_google:
@@ -839,6 +974,10 @@ def intents_to_rows(
                     reason=reason,
                     quality_warning=quality_warning,
                     evidence_tier=intent.evidence_tier,
+                    quality_score=intent.quality_score,
+                    quality_reason=intent.quality_reason,
+                    selection_score=intent.selection_score,
+                    soft_penalties=intent.soft_penalties,
                 )
             )
 
@@ -906,6 +1045,8 @@ def _parse_intents(
                 intent_id=str(raw_intent.get("intent_id") or "").strip() or _intent_id_from_fields(category, intent_text),
                 reason=str(raw_intent.get("reason") or ""),
                 evidence_tier=str(raw_intent.get("evidence_tier") or "") or None,
+                quality_score=str(raw_intent.get("quality_score") or "").strip() or None,
+                quality_reason=str(raw_intent.get("quality_reason") or raw_intent.get("reason") or "").strip() or None,
                 allowed_platforms=allowed_platforms,
                 shared_render=shared_render,
                 naver_render=naver_render,
@@ -953,6 +1094,8 @@ def _parse_items(
                 intent_id=_intent_id_from_fields(category, keyword),
                 reason=str(raw_item.get("reason") or ""),
                 evidence_tier=str(raw_item.get("evidence_tier") or "") or None,
+                quality_score=str(raw_item.get("quality_score") or "").strip() or None,
+                quality_reason=str(raw_item.get("quality_reason") or raw_item.get("reason") or "").strip() or None,
                 allowed_platforms=allowed_platforms,
                 shared_render=shared_render,
                 naver_render=naver_render,
@@ -1206,6 +1349,7 @@ def _find_payload_container(payload: Any, *, required_keys: set[str]) -> Any:
 def _intent_id_from_fields(category: str, intent_text: str) -> str:
     seed = f"{category}|{intent_text}".encode("utf-8")
     return hashlib.sha1(seed).hexdigest()[:16]
+
 
 
 

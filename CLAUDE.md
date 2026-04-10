@@ -1,85 +1,75 @@
-# Claude Supervisor Guide
+﻿# Claude Supervisor Guide
 
-## 목적
+## 紐⑹쟻
 
-이 저장소에서 Claude는 supervisor 역할을 맡는다. Codex는 구현 담당이다.
+????μ냼?먯꽌 Claude??supervisor ??븷??留〓뒗?? Codex??援ы쁽 ?대떦?대떎.
 
 ## Source Of Truth
 
-- 원문 요구사항과 외부 참고 자료는 `artifacts/`를 기준으로 본다.
-- `artifacts/`는 수정하지 않는다.
-- 원문과 최신 판단이 다르면 `docs/`에 차이를 기록한다.
+- ?먮Ц ?붽뎄?ы빆怨??몃? 李멸퀬 ?먮즺??`artifacts/`瑜?湲곗??쇰줈 蹂몃떎.
+- `artifacts/`???섏젙?섏? ?딅뒗??
+- ?먮Ц怨?理쒖떊 ?먮떒???ㅻⅤ硫?`docs/`??李⑥씠瑜?湲곕줉?쒕떎.
 
-## Claude 역할
+## Claude ??븷
 
-- 요구사항 해석 충돌 정리
-- 범위 통제와 우선순위 결정
-- stack/task 분해 방향 제시
-- 설계 대안 비교와 선택
-- 구현 종료 후 상위 리뷰
+- ?붽뎄?ы빆 ?댁꽍 異⑸룎 ?뺣━
+- 踰붿쐞 ?듭젣? ?곗꽑?쒖쐞 寃곗젙
+- stack/task 遺꾪빐 諛⑺뼢 ?쒖떆
+- ?ㅺ퀎 ???鍮꾧탳? ?좏깮
+- 援ы쁽 醫낅즺 ???곸쐞 由щ럭
 
-## Claude가 개입해야 하는 경우
+## Claude媛 媛쒖엯?댁빞 ?섎뒗 寃쎌슦
 
-- 요구사항 해석이 갈릴 때
-- 구현안이 2개 이상으로 갈릴 때
-- API 경계, auth, security, storage, deployment 같은 상위 결정일 때
-- 범위 확대 또는 큰 리팩터링이 필요할 때
-- Codex가 구현은 끝냈지만 제품/설계 관점 최종 확인이 필요할 때
+- ?붽뎄?ы빆 ?댁꽍??媛덈┫ ??- 援ы쁽?덉씠 2媛??댁긽?쇰줈 媛덈┫ ??- API 寃쎄퀎, auth, security, storage, deployment 媛숈? ?곸쐞 寃곗젙????- 踰붿쐞 ?뺣? ?먮뒗 ??由ы뙥?곕쭅???꾩슂????- Codex媛 援ы쁽? ?앸깉吏留??쒗뭹/?ㅺ퀎 愿??理쒖쥌 ?뺤씤???꾩슂????
+## Claude媛 源딄쾶 媛쒖엯?섏? ?딆븘???섎뒗 寃쎌슦
 
-## Claude가 깊게 개입하지 않아도 되는 경우
+- 湲곗〈 ?⑦꽩??留욎텣 肄붾뱶 ?묒꽦
+- ?뚯뒪??異붽?/?섏젙
+- ?뚭퇋紐?踰꾧렇 ?섏젙
+- 援?냼 由ы뙥?곕쭅
+- 1李????由щ럭 諛섏쁺
 
-- 기존 패턴에 맞춘 코드 작성
-- 테스트 추가/수정
-- 소규모 버그 수정
-- 국소 리팩터링
-- 1차 셀프 리뷰 반영
+## Codex ??븷
 
-## Codex 역할
+- 肄붾뱶踰좎씠???뺤씤
+- ?ㅼ젣 援ы쁽
+- ?뚯뒪?몄? ?붾쾭源?- 1李?肄붾뱶 由щ럭
+- Claude?먭쾶 ?щ┫ ?먮떒 ?ъ씤???뺣━
 
-- 코드베이스 확인
-- 실제 구현
-- 테스트와 디버깅
-- 1차 코드 리뷰
-- Claude에게 올릴 판단 포인트 정리
+## ?묒뾽 ?쒖옉 ?쒖꽌
 
-## 작업 시작 순서
+1. `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md` ?뺤씤
+2. `docs/OPERATING_MODEL.md` ?뺤씤
+3. `docs/GSTACK_WORKFLOW.md` ?뺤씤
+4. `docs/ACTIVE_HANDOFF.md`?먯꽌 ?꾩옱 紐⑺몴? 誘명빐寃?吏덈Ц ?뺤씤
+5. ?꾩슂 ??`docs/OPEN_QUESTIONS.md`? `tasks/` ?뺤씤
 
-1. `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md` 확인
-2. `docs/OPERATING_MODEL.md` 확인
-3. `docs/GSTACK_WORKFLOW.md` 확인
-4. `docs/ACTIVE_HANDOFF.md`에서 현재 목표와 미해결 질문 확인
-5. 필요 시 `docs/OPEN_QUESTIONS.md`와 `tasks/` 확인
+## Claude?먭쾶 湲곕??섎뒗 異쒕젰 ?뺤떇
 
-## Claude에게 기대하는 출력 형식
+- ?대쾲 ?댁쓽 紐⑺몴
+- ?대쾲 ??踰붿쐞 諛???ぉ
+- Codex媛 援ы쁽???⑥쐞
+- ?먮떒???꾩슂???댁뒋
+- ?꾨즺 湲곗?
 
-- 이번 턴의 목표
-- 이번 턴 범위 밖 항목
-- Codex가 구현할 단위
-- 판단이 필요한 이슈
-- 완료 기준
+## README 理쒖떊??洹쒖튃
 
-## README 최신화 규칙
+`README.md`??InsightChat ?곕룞 ?대떦?먯? ?좉퇋 ?⑸쪟?먭? 媛??癒쇱? ?쎈뒗 臾몄꽌?? ?꾨옒 ??ぉ??蹂寃쎈릺硫?諛섎뱶??README.md瑜??④퍡 ?낅뜲?댄듃?쒕떎.
 
-`README.md`는 InsightChat 연동 담당자와 신규 합류자가 가장 먼저 읽는 문서다. 아래 항목이 변경되면 반드시 README.md를 함께 업데이트한다.
+- API ?붾뱶?ъ씤???먮뒗 ?붿껌/?묐떟 ?ㅽ궎留?蹂寃?- 異쒕젰 ?ㅽ궎留?`url`, `product_name`, `category`, `keyword`, `naver_match`, `google_match`, `reason`, `quality_warning`) 蹂寃?- Job ?곹깭 enum 異붽?쨌??젣쨌?대쫫 蹂寃?- ?몄쬆 諛⑹떇 蹂寃?- 湲곗닠 ?ㅽ깮 蹂寃?(?몄뼱 踰꾩쟾, 二쇱슂 ?쇱씠釉뚮윭由? ?명봽??
+- ??μ냼 援ъ“ 蹂寃?(?붾젆?곕━ 異붽?쨌??젣)
 
-- API 엔드포인트 또는 요청/응답 스키마 변경
-- 출력 스키마(`url`, `product_name`, `category`, `keyword`, `naver_match`, `google_match`, `reason`, `quality_warning`) 변경
-- Job 상태 enum 추가·삭제·이름 변경
-- 인증 방식 변경
-- 기술 스택 변경 (언어 버전, 주요 라이브러리, 인프라)
-- 저장소 구조 변경 (디렉터리 추가·삭제)
+## ?щ컻 諛⑹? 洹쒖튃
 
-## 재발 방지 규칙
+?몄뀡 ?쒖옉 ???꾨옒 ?쇰뱶諛?洹쒖튃??諛섎뱶???뺤씤?쒕떎. 怨쇨굅???ㅼ젣濡?諛쒖깮???ㅼ닔瑜?湲곕컲?쇰줈 ?묒꽦??
 
-세션 시작 전 아래 피드백 규칙을 반드시 확인한다. 과거에 실제로 발생한 실수를 기반으로 작성됨.
+1. **FR ?뺣룆 ???ㅺ퀎 寃곗젙 湲덉?**: `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md`瑜??뺣룆?섍린 ?꾩뿉 紐⑤뜽쨌?쇱씠釉뚮윭由?룹뒪肄뷀봽瑜??ㅺ퀎 臾몄꽌???ы븿?섏? ?딅뒗??
+2. **?ъ슜?먭? 紐낆떆??寃껊쭔 ?뺤젙 泥섎━**: 異붾줎?대굹 湲곕낯媛믪? "?뺤젙(??" 泥섎━ 湲덉?. ?ъ슜?먭? 吏곸젒 留먰븳 寃껊쭔 ?뺤젙.
+3. **踰꾩쟾 吏????wheel ?뺤씤 ?꾩닔**: Python 踰꾩쟾?대굹 ?듭떖 ?쇱씠釉뚮윭由?踰꾩쟾???뺥븷 ??PyPI wheel 吏???꾪솴怨?LTS 湲곌컙???뺤씤?섍퀬 洹쇨굅? ?④퍡 湲곕줉?쒕떎.
 
-1. **FR 정독 전 설계 결정 금지**: `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md`를 정독하기 전에 모델·라이브러리·스코프를 설계 문서에 포함하지 않는다.
-2. **사용자가 명시한 것만 확정 처리**: 추론이나 기본값은 "확정(✅)" 처리 금지. 사용자가 직접 말한 것만 확정.
-3. **버전 지정 전 wheel 확인 필수**: Python 버전이나 핵심 라이브러리 버전을 정할 때 PyPI wheel 지원 현황과 LTS 기간을 확인하고 근거와 함께 기록한다.
+?곸꽭 ?댁슜: `C:\Users\NHN\.claude\projects\c--Users-NHN-Repo-Keyword-Generator\memory\` ??feedback_*.md ?뚯씪 李몄“.
 
-상세 내용: `C:\Users\NHN\.claude\projects\c--Users-NHN-Repo-Keyword-Generator\memory\` 내 feedback_*.md 파일 참조.
-
-## 참고 문서
+## 李멸퀬 臾몄꽌
 
 - `docs/OPERATING_MODEL.md`
 - `docs/GSTACK_WORKFLOW.md`
@@ -111,5 +101,13 @@
 20. **Require semantic hardcoding cleanup to delete the old path, not just bypass it**: when a deterministic uplift helper or alias table is no longer acceptable, ask Codex to remove the helper and update tests/docs rather than leaving dead boost code in place.
 21. **Keep audience/use-case normalization formatting-only during review**: preserving whitespace-normalized observed phrasing is acceptable, but deterministic generation should not expand raw `audience` or `use_case` facts into category-led scaffolds like `<audience> <category>` or `<use_case> <category>`.
 22. **Require problem-slot seeds to remain concern-grounded**: if deterministic logic mixes `audience` or `usage_context` values into `problem_noun_phrase` seeds, send it back. Problem-slot expansion must start from explicit concern/problem evidence.
-21. **Reject product-name token folklore as category inference**: if deterministic generation infers canonical product categories from ad hoc token maps like `mask -> 스킨케어` or `earbud -> 무선 이어폰`, require an evidence-first fallback instead.
-22. **Reject audience-to-category auto-promotion in deterministic helpers**: broad audience evidence such as `건성 복합성 피부` should not be deterministically turned into category phrases like `건성 복합성 피부 마스크` unless the exact phrase is grounded on the page.
+21. **Reject product-name token folklore as category inference**: if deterministic generation infers canonical product categories from ad hoc token maps like `mask -> ?ㅽ궓耳?? or `earbud -> 臾댁꽑 ?댁뼱??, require an evidence-first fallback instead.
+22. **Reject audience-to-category auto-promotion in deterministic helpers**: broad audience evidence such as `嫄댁꽦 蹂듯빀???쇰?` should not be deterministically turned into category phrases like `嫄댁꽦 蹂듯빀???쇰? 留덉뒪?? unless the exact phrase is grounded on the page.
+28. **Do not expand weak preservation or convenience copy into situational queries**: evidence such as `냉동 보관`, storage guidance, or convenience phrasing must not be turned into `나들이`, `캠핑`, `피크닉`, `여행`, or similar situational/seasonal keywords unless those exact situations are explicitly grounded on the page.
+29. **Public OCR benchmark adapters must inspect dataset GT schema before assuming same-stem labels**: some product OCR datasets ship manifest-level annotations instead of one label file per image. `Unitail-OCR` gallery uses COCO-style `ocr_gt.json`; benchmark code must group `annotations[*].text-words` by `image_id` into per-image reference text before scoring.
+29. **Run local OCR benchmarks through the real Windows-safe paddle path and record speed mode**: when reviewing or asking Codex to benchmark OCR locally on Windows, require the base interpreter from `.venv-paddleocr/pyvenv.cfg`, `PYTHONPATH` prepended with `.venv-paddleocr/Lib/site-packages`, and `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=1`. Prefer one-sample benchmark runs via `scripts/evaluate_ocr_benchmark.py --product-label ...`, and if `--product-max-side` is used to speed up very tall banners, make sure the resized dimensions are recorded with the result instead of being treated as the default quality baseline.
+30. **Do not pay every OCR multipass cost once a strong pass exists**: multi-pass OCR is acceptable for recovery, but the runner should stop after the first pass that already yields strong text volume/coverage for the current candidate type. Do not insist on running contrast/upscale fallbacks on large images when the original pass is already good enough.
+31. **Public OCR benchmark roots must exclude local preprocessing artifacts**: when benchmarking cloned or extracted public datasets, ignore locally generated files such as `*_enhance_contrast`, `*_upscale_x2`, tiles, or similar derivative images. Benchmark rows must come from source dataset assets only.
+32. **Do not require page-title token overlap for same-page OCR label/spec fields**: on ranked same-page detail images, explicit product field labels such as `제품명`, `품질표시사항`, `재질`, `제조국`, `가격`, `ingredient(s)`, or `material` are valid deterministic same-product signals. Do not reject these blocks solely because they omit the page-title tokens verbatim.
+33. **Recompute trusted OCR eligibility at the merged line-group level**: when short same-page label/spec blocks are grouped, evaluate the merged text quality and direct-candidate eligibility from the combined line-group text. Do not inherit only the strongest child block score if that would hide an informative grouped field cluster.
+

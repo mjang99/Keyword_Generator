@@ -4,6 +4,8 @@ from collections.abc import Callable
 from typing import Any
 
 from src.keyword_generation import GenerationRequest, generate_keywords
+from src.keyword_generation.models import CanonicalIntent, KeywordRow, SharedRender
+from src.keyword_generation.service import _preserve_missing_generic_head_rows
 from tests.evaluate_quality import compute_auto_scores
 
 
@@ -321,3 +323,119 @@ def test_audio_page_does_not_invent_season_or_problem_keywords() -> None:
 
     assert not [row for row in result.rows if row.category == "season_event"]
     assert not [row for row in result.rows if row.category == "problem_solution"]
+
+
+def test_generic_category_preserves_grounded_bare_market_head_alongside_specific_head() -> None:
+    evidence = {
+        "raw_url": "https://www.rankingdak.com/product/view?productCd=F000008814",
+        "canonical_url": "https://www.rankingdak.com/product/view?productCd=F000008814",
+        "page_class": "commerce_pdp",
+        "product_name": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+        "canonical_product_name": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+        "facts": [
+            {
+                "type": "brand",
+                "value": "맛있닭",
+                "normalized_value": "맛있닭",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_name",
+                "value": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+                "normalized_value": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_category",
+                "value": "소스 닭가슴살",
+                "normalized_value": "소스 닭가슴살",
+                "admissibility_tags": ["product_identity", "category"],
+            },
+        ],
+    }
+    rows = [
+        KeywordRow(
+            url=evidence["raw_url"],
+            product_name=evidence["canonical_product_name"],
+            category="generic_category",
+            keyword="소스 닭가슴살",
+            slot_type="generic_type_phrase",
+            naver_match="확장소재",
+            google_match="broad",
+            reason="fixture",
+            evidence_tier="direct",
+        )
+    ]
+    source_intents = [
+        CanonicalIntent(
+            category="generic_category",
+            intent_text="소스 닭가슴살",
+            slot_type="generic_type_phrase",
+            reason="fixture",
+            shared_render=SharedRender(keyword="소스 닭가슴살"),
+        ),
+        CanonicalIntent(
+            category="generic_category",
+            intent_text="닭가슴살",
+            slot_type="generic_type_phrase",
+            reason="fixture",
+            shared_render=SharedRender(keyword="닭가슴살"),
+        ),
+    ]
+
+    preserved = _preserve_missing_generic_head_rows(
+        rows,
+        source_intents=source_intents,
+        evidence_pack=evidence,
+        requested_platform_mode="both",
+    )
+
+    assert [row.keyword for row in preserved if row.category == "generic_category"] == ["소스 닭가슴살", "닭가슴살"]
+
+
+def test_generic_category_does_not_preserve_bare_head_without_specific_sibling() -> None:
+    evidence = {
+        "raw_url": "https://www.rankingdak.com/product/view?productCd=F000008814",
+        "canonical_url": "https://www.rankingdak.com/product/view?productCd=F000008814",
+        "page_class": "commerce_pdp",
+        "product_name": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+        "canonical_product_name": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+        "facts": [
+            {
+                "type": "brand",
+                "value": "맛있닭",
+                "normalized_value": "맛있닭",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_name",
+                "value": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+                "normalized_value": "맛있닭 소스 닭가슴살 떡꼬치맛 150g",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_category",
+                "value": "소스 닭가슴살",
+                "normalized_value": "소스 닭가슴살",
+                "admissibility_tags": ["product_identity", "category"],
+            },
+        ],
+    }
+    source_intents = [
+        CanonicalIntent(
+            category="generic_category",
+            intent_text="닭가슴살",
+            slot_type="generic_type_phrase",
+            reason="fixture",
+            shared_render=SharedRender(keyword="닭가슴살"),
+        )
+    ]
+
+    preserved = _preserve_missing_generic_head_rows(
+        [],
+        source_intents=source_intents,
+        evidence_pack=evidence,
+        requested_platform_mode="both",
+    )
+
+    assert preserved == []

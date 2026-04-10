@@ -44,6 +44,9 @@ MARKETPLACE_HOST_TOKENS = {
 }
 PRODUCT_TYPE_HINTS: dict[str, tuple[str, ...]] = {
     "skincare": ("retinol", "레티놀", "serum", "cream", "mask", "sleeping", "moisturizer", "hydrator", "스킨케어", "세럼", "크림", "마스크", "보습"),
+    "smartphone": ("iphone", "아이폰", "galaxy", "갤럭시", "smartphone", "phone", "mobile", "휴대폰", "핸드폰", "pixel", "픽셀", "xiaomi", "샤오미"),
+    "phone_case": ("case", "케이스", "silicone", "실리콘", "cover", "커버", "magsafe", "맥세이프"),
+    "protein_food": ("닭가슴살", "chicken breast", "protein", "단백질", "랭킹닭컴", "맛있닭", "냉동"),
     "electronics": ("macbook", "laptop", "notebook", "노트북", "맥북", "spec", "manual"),
     "audio": ("airpods", "earbud", "이어버드", "이어폰", "헤드폰"),
     "footwear": ("shoe", "shoes", "sneaker", "running", "러닝화", "스니커즈", "신발"),
@@ -73,6 +76,26 @@ GENERIC_PRODUCT_TYPE_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
         "마스크": ("슬리핑 마스크", "보습 마스크", "수분 마스크"),
         "default": ("스킨케어", "보습 케어", "민감 피부 케어"),
     },
+    "smartphone": {
+        "iphone": ("스마트폰", "휴대폰", "핸드폰"),
+        "아이폰": ("스마트폰", "휴대폰", "핸드폰"),
+        "galaxy": ("스마트폰", "휴대폰", "핸드폰"),
+        "갤럭시": ("스마트폰", "휴대폰", "핸드폰"),
+        "default": ("스마트폰", "휴대폰", "핸드폰"),
+    },
+    "phone_case": {
+        "case": ("케이스", "폰 케이스", "스마트폰 케이스", "실리콘 케이스"),
+        "케이스": ("케이스", "폰 케이스", "스마트폰 케이스", "실리콘 케이스"),
+        "silicone": ("실리콘 케이스", "케이스", "폰 케이스"),
+        "실리콘": ("실리콘 케이스", "케이스", "폰 케이스"),
+        "default": ("케이스", "폰 케이스", "스마트폰 케이스", "실리콘 케이스"),
+    },
+    "protein_food": {
+        "닭가슴살": ("닭가슴살", "소스 닭가슴살", "단백질 식품"),
+        "chicken breast": ("닭가슴살", "소스 닭가슴살", "단백질 식품"),
+        "protein": ("단백질 식품", "닭가슴살"),
+        "default": ("닭가슴살", "소스 닭가슴살", "단백질 식품"),
+    },
     "electronics": {
         "macbook": ("노트북", "프로 노트북", "업무용 노트북"),
         "default": ("전자기기", "디지털 기기"),
@@ -88,10 +111,27 @@ GENERIC_PRODUCT_TYPE_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 COMPETITOR_BRAND_SEEDS: dict[str, tuple[str, ...]] = {
     "skincare": ("이니스프리", "메디힐", "닥터자르트", "에스트라", "아이오페"),
+    "smartphone": ("갤럭시", "Galaxy", "삼성", "Samsung", "샤오미", "Xiaomi", "픽셀", "Pixel", "아이폰", "iPhone"),
+    "phone_case": ("스피젠", "슈피겐", "링케", "ESR", "OtterBox", "UAG", "엘라고", "아라리", "벨킨", "테크21", "카카오프렌즈", "모란카노", "아이폰", "iPhone"),
+    "protein_food": ("하림", "참프레", "굽네", "허닭", "아임닭", "잇메이트"),
     "footwear": ("살로몬", "콜롬비아", "머렐", "블랙야크", "호카"),
     "audio": ("소니", "보스", "JBL", "삼성", "애플"),
     "electronics": ("삼성", "LG", "레노버", "델", "HP", "ASUS", "애플"),
     "general": (),
+}
+HARD_POLICY_ISSUES = {
+    "empty_keyword",
+    "repeated_phrase",
+    "placeholder_unit",
+    "doc_boilerplate",
+    "invalid_exact",
+    "invalid_negative",
+    "invalid_competitor",
+    "placeholder_product_term",
+    "domain_mismatch_phrase",
+}
+SOFT_POLICY_ISSUES = {
+    "low_information",
 }
 
 
@@ -103,7 +143,7 @@ def filter_keyword_rows(
     kept: list[KeywordRow] = []
     dropped: list[dict[str, str]] = []
     for row in rows:
-        issues = keyword_policy_issues(row, evidence_pack=evidence_pack)
+        issues = keyword_hard_policy_issues(row, evidence_pack=evidence_pack)
         if issues:
             dropped.append(
                 {
@@ -115,6 +155,14 @@ def filter_keyword_rows(
             continue
         kept.append(row)
     return kept, dropped
+
+
+def keyword_hard_policy_issues(row: KeywordRow, *, evidence_pack: dict[str, Any]) -> list[str]:
+    return [issue for issue in keyword_policy_issues(row, evidence_pack=evidence_pack) if issue in HARD_POLICY_ISSUES]
+
+
+def keyword_soft_policy_issues(row: KeywordRow, *, evidence_pack: dict[str, Any]) -> list[str]:
+    return [issue for issue in keyword_policy_issues(row, evidence_pack=evidence_pack) if issue in SOFT_POLICY_ISSUES]
 
 
 def keyword_policy_issues(row: KeywordRow, *, evidence_pack: dict[str, Any]) -> list[str]:
@@ -395,9 +443,56 @@ def is_valid_competitor_keyword(keyword: str, *, evidence_pack: dict[str, Any]) 
     if len(_tokens(keyword)) < 2:
         return False
     generic_categories = generic_category_terms(evidence_pack)
-    if generic_categories and not any(category.casefold() in lowered for category in generic_categories):
+    if any(category.casefold() in lowered for category in generic_categories):
+        return True
+    if _has_current_identity_context(lowered, evidence_pack=evidence_pack, matched_brand=matched_brand):
+        return _has_explicit_comparison_context(lowered, evidence_pack=evidence_pack, matched_brand=matched_brand) or (
+            "smartphone" in resolve_product_types(evidence_pack)
+        )
+    return False
+
+
+def _has_explicit_comparison_context(
+    lowered_keyword: str,
+    *,
+    evidence_pack: dict[str, Any],
+    matched_brand: str,
+) -> bool:
+    if not any(token in lowered_keyword for token in ("vs", "비교", "대체", "대안")):
         return False
-    return True
+
+    return _has_current_identity_context(lowered_keyword, evidence_pack=evidence_pack, matched_brand=matched_brand)
+
+
+def _has_current_identity_context(
+    lowered_keyword: str,
+    *,
+    evidence_pack: dict[str, Any],
+    matched_brand: str,
+) -> bool:
+    matched_brand_tokens = {token for token in _tokens(matched_brand) if token}
+    for term in _competitor_identity_terms(evidence_pack):
+        lowered_term = term.casefold()
+        if not lowered_term:
+            continue
+        if lowered_term in matched_brand_tokens:
+            continue
+        if len(lowered_term) < 2:
+            continue
+        if lowered_term in lowered_keyword:
+            return True
+    return False
+
+
+def _competitor_identity_terms(evidence_pack: dict[str, Any]) -> list[str]:
+    product_name = canonical_product_name(evidence_pack)
+    brand = canonical_brand(evidence_pack)
+    short_name = short_product_name(product_name, brand)
+    raw_url = str(evidence_pack.get("raw_url") or evidence_pack.get("canonical_url") or "")
+    parsed = urlparse(raw_url)
+    path_terms = [part for part in re.split(r"[^A-Za-z0-9가-힣]+", parsed.path) if len(part) >= 2]
+    token_terms = [token for token in _tokens(product_name) + _tokens(short_name) if len(token) >= 2]
+    return _unique_terms([product_name, short_name, brand, *token_terms, *path_terms])
 
 
 def malformed_positive_row_count(rows: list[KeywordRow], *, evidence_pack: dict[str, Any], platform: str) -> int:
@@ -409,7 +504,7 @@ def malformed_positive_row_count(rows: list[KeywordRow], *, evidence_pack: dict[
             continue
         if platform == "google_sa" and not row.google_match:
             continue
-        if keyword_policy_issues(row, evidence_pack=evidence_pack):
+        if keyword_hard_policy_issues(row, evidence_pack=evidence_pack):
             count += 1
     return count
 
@@ -423,7 +518,7 @@ def invalid_negative_row_count(rows: list[KeywordRow], *, evidence_pack: dict[st
             continue
         if platform == "google_sa" and row.google_match != "negative":
             continue
-        if keyword_policy_issues(row, evidence_pack=evidence_pack):
+        if keyword_hard_policy_issues(row, evidence_pack=evidence_pack):
             count += 1
     return count
 

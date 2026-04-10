@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from src.keyword_generation.models import KeywordRow
-from src.keyword_generation.service import _surface_cleanup_rows
+from src.keyword_generation.service import _annotate_selection_scores, _surface_cleanup_rows
 
 
-def test_surface_cleanup_requires_grounded_feature_attribute_evidence() -> None:
+def test_selection_scoring_penalizes_ungrounded_feature_attribute_evidence() -> None:
     evidence_pack = {
         "raw_url": "https://example.com/phone-x",
         "canonical_url": "https://example.com/phone-x",
@@ -37,12 +37,19 @@ def test_surface_cleanup_requires_grounded_feature_attribute_evidence() -> None:
         ),
     ]
 
-    cleaned = _surface_cleanup_rows(rows, evidence_pack=evidence_pack)
+    scored = _annotate_selection_scores(rows, evidence_pack=evidence_pack)
 
-    assert [row.keyword for row in cleaned] == ["512GB smartphone"]
+    assert [row.keyword for row in _surface_cleanup_rows(rows, evidence_pack=evidence_pack)] == [
+        "512GB smartphone",
+        "CDMA smartphone",
+    ]
+    assert scored[0].selection_score is not None
+    assert scored[1].selection_score is not None
+    assert scored[0].selection_score > scored[1].selection_score
+    assert "surface_ungrounded_feature" in scored[1].soft_penalties
 
 
-def test_surface_cleanup_requires_grounded_season_event_or_usage_context() -> None:
+def test_selection_scoring_penalizes_ungrounded_season_event_or_usage_context() -> None:
     evidence_pack = {
         "raw_url": "https://example.com/mask",
         "canonical_url": "https://example.com/mask",
@@ -75,12 +82,19 @@ def test_surface_cleanup_requires_grounded_season_event_or_usage_context() -> No
         ),
     ]
 
-    cleaned = _surface_cleanup_rows(rows, evidence_pack=evidence_pack)
+    scored = _annotate_selection_scores(rows, evidence_pack=evidence_pack)
 
-    assert [row.keyword for row in cleaned] == ["night routine mask"]
+    assert [row.keyword for row in _surface_cleanup_rows(rows, evidence_pack=evidence_pack)] == [
+        "night routine mask",
+        "free shipping mask",
+    ]
+    assert scored[0].selection_score is not None
+    assert scored[1].selection_score is not None
+    assert scored[0].selection_score > scored[1].selection_score
+    assert "surface_ungrounded_season" in scored[1].soft_penalties
 
 
-def test_surface_cleanup_requires_grounded_problem_solution_evidence() -> None:
+def test_selection_scoring_penalizes_ungrounded_problem_solution_evidence() -> None:
     evidence_pack = {
         "raw_url": "https://example.com/phone-x",
         "canonical_url": "https://example.com/phone-x",
@@ -113,6 +127,13 @@ def test_surface_cleanup_requires_grounded_problem_solution_evidence() -> None:
         ),
     ]
 
-    cleaned = _surface_cleanup_rows(rows, evidence_pack=evidence_pack)
+    scored = _annotate_selection_scores(rows, evidence_pack=evidence_pack)
 
-    assert [row.keyword for row in cleaned] == ["battery drain smartphone"]
+    assert [row.keyword for row in _surface_cleanup_rows(rows, evidence_pack=evidence_pack)] == [
+        "battery drain smartphone",
+        "storage shortage smartphone",
+    ]
+    assert scored[0].selection_score is not None
+    assert scored[1].selection_score is not None
+    assert scored[0].selection_score > scored[1].selection_score
+    assert "surface_ungrounded_problem" in scored[1].soft_penalties

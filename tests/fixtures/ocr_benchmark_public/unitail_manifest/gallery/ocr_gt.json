@@ -1,0 +1,30 @@
+{
+  "images": [
+    {
+      "file_name": "./imgs/sample_001.png",
+      "height": 100,
+      "width": 100,
+      "id": 7
+    }
+  ],
+  "annotations": [
+    {
+      "id": 3,
+      "image_id": 7,
+      "bbox": [30, 40, 15, 8],
+      "text-words": "Cream"
+    },
+    {
+      "id": 2,
+      "image_id": 7,
+      "bbox": [10, 10, 15, 8],
+      "text-words": "Cicapair"
+    },
+    {
+      "id": 4,
+      "image_id": 7,
+      "bbox": [50, 40, 10, 8],
+      "text-words": "50ml"
+    }
+  ]
+}

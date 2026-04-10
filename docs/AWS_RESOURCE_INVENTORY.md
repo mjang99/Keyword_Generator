@@ -54,6 +54,12 @@ The current codebase exposes these direct Lambda entrypoints:
 
 This is the deployable baseline Terraform now supports. The separate OCR and generation workers remain part of the future target architecture, so the `ocr` and `generation` queues are provisioned now but not yet mapped to Lambda functions.
 
+Important deployment note:
+
+- If you deploy the current baseline today, OCR does not run in a standalone `ocr-worker` Lambda yet.
+- OCR runs inside `collection-worker` via the in-process `HtmlCollectionPipeline` seam, which may launch the PaddleOCR subprocess when `KEYWORD_GENERATOR_OCR_ENABLED=1` and the OCR runner env is configured.
+- The `ocr` and `generation` queues are reserved for the target split architecture, but they are not consumed by standalone Lambda handlers in the current Terraform baseline.
+
 ## Lambda Env Contract
 
 These values must be injected into the deployed Lambda functions:
@@ -74,6 +80,22 @@ These values must be injected into the deployed Lambda functions:
 | `BEDROCK_INFERENCE_PROFILE_ID` or `BEDROCK_MODEL_ID` | Bedrock target |
 | `BEDROCK_MAX_TOKENS` | explicit Bedrock token cap |
 | `CACHE_VALIDITY_MIN_AGE_DAYS` | age gate for scheduled cache validation sweep |
+
+When enabling OCR in the current deployable baseline, also inject:
+
+| Env var | Purpose |
+| --- | --- |
+| `KEYWORD_GENERATOR_OCR_ENABLED` | enable the OCR subprocess path inside `collection-worker` |
+| `KEYWORD_GENERATOR_OCR_PYTHON` | absolute Python path used to launch PaddleOCR |
+| `KEYWORD_GENERATOR_OCR_SITE_PACKAGES` | site-packages path prepended for the OCR subprocess |
+| `KEYWORD_GENERATOR_OCR_MAX_IMAGES` | cap on ranked images processed per URL |
+| `KEYWORD_GENERATOR_OCR_TIMEOUT_SECONDS` | per-image OCR subprocess timeout |
+| `KEYWORD_GENERATOR_OCR_STRUCTURED_ENABLED` | enable structured OCR for table-like assets |
+| `KEYWORD_GENERATOR_OCR_RECTIFY_ENABLED` | enable OCR rectification pass when supported |
+| `KEYWORD_GENERATOR_OCR_MULTIPASS_ENABLED` | allow contrast/upscale fallback passes |
+| `KEYWORD_GENERATOR_OCR_TILING_ENABLED` | allow vertical tiling for long detail banners |
+| `KEYWORD_GENERATOR_OCR_LANGUAGE_ROUTING_ENABLED` | allow alternative recognizer routing for English-heavy assets |
+| `KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED` | local/dev override to run OCR on unsupported pages |
 
 ## Deployment Split
 

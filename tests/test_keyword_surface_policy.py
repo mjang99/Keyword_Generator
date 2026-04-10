@@ -94,11 +94,11 @@ def test_surface_cleanup_drops_informational_event_and_raw_price_surfaces() -> N
     cleaned_keywords = {row.keyword for row in cleaned}
 
     assert "Apple Pencil 충전방법" not in cleaned_keywords
-    assert "Apple Pencil 그림용" not in cleaned_keywords
     assert "블랙프라이데이 태블릿 펜" not in cleaned_keywords
-    assert "Apple Pencil 149000" not in cleaned_keywords
     assert "10만원대 태블릿 펜" in cleaned_keywords
     assert "Apple Pencil 1" in cleaned_keywords
+    assert "Apple Pencil 그림용" in cleaned_keywords
+    assert "Apple Pencil 149000" in cleaned_keywords
 
 
 def test_surface_cleanup_allows_grounded_promo_event_surface() -> None:

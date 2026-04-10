@@ -39,6 +39,7 @@ from .policy import (
     filter_keyword_rows,
     generic_category_terms,
     is_low_information_keyword as policy_is_low_information_keyword,
+    keyword_soft_policy_issues,
     resolve_product_types,
     taxonomy_terms,
 )
@@ -70,6 +71,22 @@ STORE_SUFFIX_TOKENS = {
     "support",
     "지원",
 }
+MODIFIER_TOKENS = {
+    "추천",
+    "후기",
+    "리뷰",
+    "비교",
+    "구매",
+    "정품",
+    "공식",
+    "사용법",
+    "가이드",
+    "정보",
+    "스펙",
+    "특징",
+    "장점",
+    "효과",
+}
 LOW_INFORMATION_TOKENS = {
     "검색",
     "정리",
@@ -78,6 +95,34 @@ LOW_INFORMATION_TOKENS = {
     "베스트",
     "카테고리",
     "정식",
+}
+QUALITY_SCORE_BASE = {
+    "high": 1.00,
+    "medium": 0.72,
+    "low": 0.45,
+}
+SOFT_POLICY_PENALTIES = {
+    "low_information": ("policy_low_information", 0.12),
+}
+SOFT_SURFACE_PENALTIES = {
+    "surface_scaffold": ("surface_scaffold", 0.12),
+    "surface_merchandising": ("surface_merchandising", 0.12),
+    "surface_feature_scaffold": ("surface_feature_scaffold", 0.12),
+    "surface_product_prefix": ("surface_product_prefix", 0.10),
+    "surface_price_shape": ("surface_price_shape", 0.10),
+    "surface_season_scaffold": ("surface_season_scaffold", 0.12),
+    "surface_product_purpose_suffix": ("surface_product_purpose_suffix", 0.12),
+    "surface_ungrounded_feature": ("surface_ungrounded_feature", 0.15),
+    "surface_ungrounded_season": ("surface_ungrounded_season", 0.15),
+    "surface_ungrounded_problem": ("surface_ungrounded_problem", 0.15),
+}
+HARD_SURFACE_POLICY_CODES = {
+    "surface_product_action",
+    "surface_informational",
+    "surface_purchase_suffix",
+    "surface_raw_price",
+    "surface_unsupported_event",
+    "surface_competitor_shape",
 }
 DIRECT_VALUE_SIGNAL_TERMS = (
     "가성비",
@@ -573,7 +618,7 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
     supplementation_slot_plan_payload = _serialize_slot_plan(supplementation_slot_plan)
     debug_payload: dict[str, Any] = {"generation": {}}
 
-    # Step A: cluster-first generation, then split only weak clusters
+    # Step A: category-first generation fanout so thin categories are not starved inside mixed batches.
     initial_batch_plans = _generation_batch_plans(
         category_plan=generation_category_plan,
         slot_plan=generation_slot_plan,
@@ -690,6 +735,12 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
     clean_rows = _hard_rule_pass(all_rows, requested_platform_mode=request.requested_platform_mode)
     clean_rows, policy_drop_rows = filter_keyword_rows(clean_rows, evidence_pack=evidence_pack)
     clean_rows, surface_drop_rows = _surface_cleanup_rows_with_reasons(clean_rows, evidence_pack=evidence_pack)
+    clean_rows = _preserve_missing_generic_head_rows(
+        clean_rows,
+        source_intents=intents,
+        evidence_pack=evidence_pack,
+        requested_platform_mode=request.requested_platform_mode,
+    )
     surviving_intents = _rows_to_intents(clean_rows, requested_platform_mode=request.requested_platform_mode)
     debug_payload["generation"]["post_policy_rows"] = [_row_debug_payload(row) for row in clean_rows]
     debug_payload["generation"]["dropped_rows"] = _dropped_row_payload(all_rows, clean_rows)
@@ -752,6 +803,12 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
         clean_rows = _hard_rule_pass(all_rows, requested_platform_mode=request.requested_platform_mode)
         clean_rows, repair_policy_drop_rows = filter_keyword_rows(clean_rows, evidence_pack=evidence_pack)
         clean_rows, repair_surface_drop_rows = _surface_cleanup_rows_with_reasons(clean_rows, evidence_pack=evidence_pack)
+        clean_rows = _preserve_missing_generic_head_rows(
+            clean_rows,
+            source_intents=surviving_intents,
+            evidence_pack=evidence_pack,
+            requested_platform_mode=request.requested_platform_mode,
+        )
         surviving_intents = _rows_to_intents(clean_rows, requested_platform_mode=request.requested_platform_mode)
         debug_payload["generation"]["pre_policy_rows_after_repair"] = [_row_debug_payload(row) for row in all_rows]
         debug_payload["generation"]["post_policy_rows_after_repair"] = [_row_debug_payload(row) for row in clean_rows]
@@ -772,9 +829,25 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
             requested_platform_mode=request.requested_platform_mode,
         )
 
-    # Step E: Final floor validation (count, category coverage, negative presence)
-    final_report = validate_keyword_rows(
+    # Step E: score positives, reserve one per category when available, then fill global top rows.
+    clean_rows = _annotate_selection_scores(clean_rows, evidence_pack=evidence_pack)
+    selected_positive_rows = _select_positive_rows(
         clean_rows,
+        requested_platform_mode=request.requested_platform_mode,
+        positive_target=request.max_keywords_per_platform,
+    )
+    selected_keys = {
+        (row.category, row.keyword, row.naver_match, row.google_match)
+        for row in selected_positive_rows
+    }
+    negative_rows = [row for row in clean_rows if row.category == NEGATIVE_CATEGORY]
+    final_rows = selected_positive_rows + negative_rows
+    final_intents = _rows_to_intents(final_rows, requested_platform_mode=request.requested_platform_mode)
+    debug_payload["generation"]["selection"] = _build_selection_summary(clean_rows, selected_positive_rows)
+
+    # Step F: Final floor validation (count and hard-rule safety)
+    final_report = validate_keyword_rows(
+        final_rows,
         requested_platform_mode=request.requested_platform_mode,
         quality_warning=quality_warning,
         evidence_pack=evidence_pack,
@@ -784,8 +857,8 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
         return GenerationResult(
             status="COMPLETED",
             requested_platform_mode=request.requested_platform_mode,
-            rows=clean_rows,
-            intents=surviving_intents,
+            rows=final_rows,
+            intents=final_intents,
             supplementation_attempts=supplementation_attempts,
             validation_report=final_report,
             debug_payload=debug_payload,
@@ -796,8 +869,8 @@ def _bedrock_pipeline(request: GenerationRequest) -> GenerationResult:
         failure_code=final_report.failure_code or "generation_count_shortfall",
         failure_detail=final_report.failure_detail or "LLM pipeline failed final floor check",
     )
-    failure.rows = clean_rows
-    failure.intents = surviving_intents
+    failure.rows = final_rows
+    failure.intents = final_intents
     failure.supplementation_attempts = supplementation_attempts
     failure.validation_report = final_report
     failure.debug_payload = debug_payload
@@ -842,28 +915,23 @@ def _llm_category_plan(positive_target: int) -> dict[str, int]:
 
 
 def _generation_batch_blueprints() -> list[dict[str, Any]]:
-    return [
+    blueprints: list[dict[str, Any]] = []
+    for category in POSITIVE_CATEGORIES:
+        blueprints.append(
+            {
+                "name": f"category_{category}",
+                "categories": (category,),
+                "split_groups": (),
+            }
+        )
+    blueprints.append(
         {
-            "name": "cluster_a",
-            "categories": ("brand", "generic_category", "purchase_intent"),
-            "split_groups": (("brand", "generic_category"), ("purchase_intent",)),
-        },
-        {
-            "name": "cluster_b",
-            "categories": ("feature_attribute", "benefit_price"),
-            "split_groups": (("feature_attribute",), ("benefit_price",)),
-        },
-        {
-            "name": "cluster_c",
-            "categories": ("long_tail", "problem_solution", "season_event"),
-            "split_groups": (("long_tail", "problem_solution"), ("season_event",)),
-        },
-        {
-            "name": "cluster_d",
-            "categories": ("competitor_comparison", NEGATIVE_CATEGORY),
-            "split_groups": (("competitor_comparison",), (NEGATIVE_CATEGORY,)),
-        },
-    ]
+            "name": f"category_{NEGATIVE_CATEGORY}",
+            "categories": (NEGATIVE_CATEGORY,),
+            "split_groups": (),
+        }
+    )
+    return blueprints
 
 
 def _build_batch_plan(
@@ -1416,6 +1484,10 @@ def _intent_debug_payload(intent: CanonicalIntent) -> dict[str, Any]:
         "intent_text": intent.intent_text,
         "reason": intent.reason,
         "evidence_tier": intent.evidence_tier,
+        "quality_score": intent.quality_score,
+        "quality_reason": intent.quality_reason,
+        "selection_score": intent.selection_score,
+        "soft_penalties": list(intent.soft_penalties),
         "shared_render": intent.shared_render.keyword if intent.shared_render else None,
         "naver_render": intent.naver_render.keyword if intent.naver_render else None,
         "google_render": intent.google_render.keyword if intent.google_render else None,
@@ -1430,6 +1502,11 @@ def _row_debug_payload(row: KeywordRow) -> dict[str, Any]:
         "naver_match": row.naver_match,
         "google_match": row.google_match,
         "reason": row.reason,
+        "evidence_tier": row.evidence_tier,
+        "quality_score": row.quality_score,
+        "quality_reason": row.quality_reason,
+        "selection_score": row.selection_score,
+        "soft_penalties": list(row.soft_penalties),
     }
 
 
@@ -1455,6 +1532,214 @@ def _dropped_row_payload(before_rows: list[KeywordRow], after_rows: list[Keyword
             continue
         dropped.append(_row_debug_payload(row))
     return dropped
+
+
+def _row_platforms(row: KeywordRow, *, requested_platform_mode: str) -> tuple[str, ...]:
+    platforms: list[str] = []
+    if requested_platform_mode in {"naver_sa", "both"} and row.naver_match:
+        platforms.append("naver_sa")
+    if requested_platform_mode in {"google_sa", "both"} and row.google_match:
+        platforms.append("google_sa")
+    return tuple(platforms)
+
+
+def _selection_family_key(keyword: str) -> str:
+    tokens = re.findall(r"[A-Za-z0-9]+|[가-힣]+", (keyword or "").casefold())
+    tokens = [token for token in tokens if token not in MODIFIER_TOKENS]
+    if not tokens:
+        return ""
+    return " ".join(tokens[:2])
+
+
+def _soft_surface_penalties_for_row(
+    row: KeywordRow,
+    *,
+    evidence_pack: dict[str, Any],
+) -> tuple[list[str], float]:
+    interpretation = _build_product_interpretation(evidence_pack)
+    reason = _surface_policy_reason(row.keyword, row.category, interpretation=interpretation)
+    if reason is None:
+        return [], 0.0
+    code, _detail = reason
+    penalty = SOFT_SURFACE_PENALTIES.get(code)
+    if penalty is None:
+        return [], 0.0
+    label, amount = penalty
+    return [label], amount
+
+
+def _soft_policy_penalties_for_row(
+    row: KeywordRow,
+    *,
+    evidence_pack: dict[str, Any],
+) -> tuple[list[str], float]:
+    penalties: list[str] = []
+    total = 0.0
+    for issue in keyword_soft_policy_issues(row, evidence_pack=evidence_pack):
+        mapped = SOFT_POLICY_PENALTIES.get(issue)
+        if mapped is None:
+            continue
+        label, amount = mapped
+        penalties.append(label)
+        total += amount
+    return penalties, total
+
+
+def _evidence_score_adjustment(evidence_tier: str | None) -> tuple[list[str], float]:
+    tier = str(evidence_tier or "").strip().lower()
+    if tier == "direct":
+        return ["evidence_direct"], 0.12
+    if tier == "weak":
+        return ["evidence_weak"], -0.10
+    if tier:
+        return [f"evidence_{tier}"], 0.04
+    return [], 0.0
+
+
+def _quality_score_base(quality_score: str | None) -> float:
+    return QUALITY_SCORE_BASE.get(str(quality_score or "").strip().lower(), 0.72)
+
+
+def _annotate_selection_scores(
+    rows: list[KeywordRow],
+    *,
+    evidence_pack: dict[str, Any],
+) -> list[KeywordRow]:
+    family_counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        if row.category == NEGATIVE_CATEGORY:
+            continue
+        family_key = _selection_family_key(row.keyword)
+        if family_key:
+            family_counts[(row.category, family_key)] = family_counts.get((row.category, family_key), 0) + 1
+
+    annotated: list[KeywordRow] = []
+    for row in rows:
+        if row.category == NEGATIVE_CATEGORY:
+            annotated.append(row)
+            continue
+
+        signals: list[str] = []
+        score = _quality_score_base(row.quality_score)
+
+        evidence_signals, evidence_delta = _evidence_score_adjustment(row.evidence_tier)
+        signals.extend(evidence_signals)
+        score += evidence_delta
+
+        policy_signals, policy_penalty = _soft_policy_penalties_for_row(row, evidence_pack=evidence_pack)
+        signals.extend(policy_signals)
+        score -= policy_penalty
+
+        surface_signals, surface_penalty = _soft_surface_penalties_for_row(row, evidence_pack=evidence_pack)
+        signals.extend(surface_signals)
+        score -= surface_penalty
+
+        family_key = _selection_family_key(row.keyword)
+        family_count = family_counts.get((row.category, family_key), 0) if family_key else 0
+        if family_count > 1:
+            crowd_penalty = min(0.16, 0.08 * (family_count - 1))
+            signals.append("duplicate_family_crowding")
+            score -= crowd_penalty
+
+        row.selection_score = round(max(0.0, min(1.0, score)), 4)
+        row.soft_penalties = tuple(signals)
+        annotated.append(row)
+
+    return annotated
+
+
+def _row_sort_key(row: KeywordRow) -> tuple[float, int]:
+    return (
+        -(row.selection_score if row.selection_score is not None else 0.0),
+        0 if row.evidence_tier == "direct" else 1,
+    )
+
+
+def _build_selection_summary(
+    candidate_rows: list[KeywordRow],
+    selected_rows: list[KeywordRow],
+) -> dict[str, Any]:
+    selected_keys = {
+        (row.category, row.keyword, row.naver_match, row.google_match)
+        for row in selected_rows
+        if row.category != NEGATIVE_CATEGORY
+    }
+    category_counts: dict[str, dict[str, int]] = {category: {"selected": 0, "dropped": 0} for category in POSITIVE_CATEGORIES}
+    cutline = None
+    dropped_by_ranking: list[dict[str, Any]] = []
+    for row in selected_rows:
+        if row.category == NEGATIVE_CATEGORY:
+            continue
+        category_counts.setdefault(row.category, {"selected": 0, "dropped": 0})
+        category_counts[row.category]["selected"] += 1
+        score = row.selection_score if row.selection_score is not None else 0.0
+        cutline = score if cutline is None else min(cutline, score)
+    for row in candidate_rows:
+        if row.category == NEGATIVE_CATEGORY:
+            continue
+        category_counts.setdefault(row.category, {"selected": 0, "dropped": 0})
+        key = (row.category, row.keyword, row.naver_match, row.google_match)
+        if key not in selected_keys:
+            category_counts[row.category]["dropped"] += 1
+            payload = _row_debug_payload(row)
+            payload["drop_stage"] = "selection"
+            payload["drop_reason_code"] = "soft_rank_loss"
+            payload["drop_reason_detail"] = "below score cutline or platform cap"
+            dropped_by_ranking.append(payload)
+    return {
+        "candidate_rows": [_row_debug_payload(row) for row in sorted(candidate_rows, key=_row_sort_key)],
+        "selected_rows": [_row_debug_payload(row) for row in selected_rows if row.category != NEGATIVE_CATEGORY],
+        "dropped_by_ranking": dropped_by_ranking,
+        "cutline_score": cutline,
+        "category_counts": category_counts,
+        "selected_positive_count": len([row for row in selected_rows if row.category != NEGATIVE_CATEGORY]),
+    }
+
+
+def _select_positive_rows(
+    rows: list[KeywordRow],
+    *,
+    requested_platform_mode: str,
+    positive_target: int,
+) -> list[KeywordRow]:
+    platform_counts = {
+        platform: 0
+        for platform in (["naver_sa", "google_sa"] if requested_platform_mode == "both" else [requested_platform_mode])
+    }
+    positive_rows = [row for row in rows if row.category != NEGATIVE_CATEGORY]
+    selected_keys: set[tuple[str, str, str, str]] = set()
+    selected: list[KeywordRow] = []
+
+    def key_for(row: KeywordRow) -> tuple[str, str, str, str]:
+        return (row.category, row.keyword, row.naver_match, row.google_match)
+
+    def can_add(row: KeywordRow) -> bool:
+        platforms = _row_platforms(row, requested_platform_mode=requested_platform_mode)
+        return bool(platforms) and all(platform_counts[platform] < positive_target for platform in platforms)
+
+    def add_row(row: KeywordRow) -> None:
+        selected.append(row)
+        selected_keys.add(key_for(row))
+        for platform in _row_platforms(row, requested_platform_mode=requested_platform_mode):
+            platform_counts[platform] += 1
+
+    for category in POSITIVE_CATEGORIES:
+        candidates = sorted(
+            [row for row in positive_rows if row.category == category and key_for(row) not in selected_keys],
+            key=_row_sort_key,
+        )
+        for row in candidates:
+            if can_add(row):
+                add_row(row)
+                break
+
+    for row in sorted([row for row in positive_rows if key_for(row) not in selected_keys], key=_row_sort_key):
+        if all(count >= positive_target for count in platform_counts.values()):
+            break
+        if can_add(row):
+            add_row(row)
+
+    return selected
 
 
 def _intent_lookup(
@@ -1602,6 +1887,20 @@ def _fallback_pipeline(request: GenerationRequest) -> GenerationResult:
         initial_target = max(0, min(target, feasible_positive_cap) - 4)
 
     intents, rows = _initial_generation(request, positive_target=initial_target)
+    rows = _preserve_missing_generic_head_rows(
+        rows,
+        source_intents=intents,
+        evidence_pack=request.evidence_pack,
+        requested_platform_mode=request.requested_platform_mode,
+    )
+    rows = _annotate_selection_scores(rows, evidence_pack=evidence_pack)
+    selected_positive_rows = _select_positive_rows(
+        rows,
+        requested_platform_mode=request.requested_platform_mode,
+        positive_target=target,
+    )
+    rows = selected_positive_rows + [row for row in rows if row.category == NEGATIVE_CATEGORY]
+    intents = _rows_to_intents(rows, requested_platform_mode=request.requested_platform_mode)
     report = validate_keyword_rows(
         rows,
         requested_platform_mode=request.requested_platform_mode,
@@ -1829,6 +2128,10 @@ def _intent_from_candidate(
     reason: str,
     evidence_tier: str,
     requested_platform_mode: str,
+    quality_score: str | None = None,
+    quality_reason: str | None = None,
+    selection_score: float | None = None,
+    soft_penalties: tuple[str, ...] = (),
 ) -> CanonicalIntent:
     naver_match, google_match = _match_labels(category, keyword, "both")
     allowed_platforms: list[str] = []
@@ -1849,6 +2152,10 @@ def _intent_from_candidate(
         intent_id=f"{category}:{keyword}",
         reason=reason,
         evidence_tier=evidence_tier,
+        quality_score=quality_score,
+        quality_reason=quality_reason,
+        selection_score=selection_score,
+        soft_penalties=soft_penalties,
         allowed_platforms=allowed_platforms,
         shared_render=SharedRender(keyword=keyword, admitted=True),
         naver_render=naver_render,
@@ -1865,6 +2172,10 @@ def _rows_to_intents(rows: list[KeywordRow], *, requested_platform_mode: str) ->
             reason=row.reason,
             evidence_tier=row.evidence_tier or "inferred",
             requested_platform_mode=requested_platform_mode,
+            quality_score=row.quality_score,
+            quality_reason=row.quality_reason,
+            selection_score=row.selection_score,
+            soft_penalties=row.soft_penalties,
         )
         for row in rows
     ]
@@ -2876,6 +3187,75 @@ def _surface_cleanup_rows(rows: list[KeywordRow], *, evidence_pack: dict[str, An
     return cleaned
 
 
+def _preserve_missing_generic_head_rows(
+    rows: list[KeywordRow],
+    *,
+    source_intents: list[CanonicalIntent],
+    evidence_pack: dict[str, Any],
+    requested_platform_mode: str,
+) -> list[KeywordRow]:
+    interpretation = _build_product_interpretation(evidence_pack)
+    grounded_generic_heads = generic_category_terms(evidence_pack)
+    if not grounded_generic_heads:
+        return rows
+
+    existing_rows = list(rows)
+    existing_keywords = {
+        " ".join(row.keyword.split()).strip().casefold()
+        for row in existing_rows
+        if row.category == "generic_category"
+    }
+    sibling_keywords = [
+        " ".join(row.keyword.split()).strip()
+        for row in existing_rows
+        if row.category == "generic_category"
+    ]
+    preserved_rows: list[KeywordRow] = []
+    preserved_limit = 2
+
+    for head in grounded_generic_heads:
+        normalized_head = " ".join(str(head or "").split()).strip()
+        if not normalized_head:
+            continue
+        lowered_head = normalized_head.casefold()
+        if lowered_head in existing_keywords:
+            continue
+        if not _is_preservable_broad_generic_head(normalized_head, interpretation=interpretation):
+            continue
+        if not any(
+            _generic_keyword_extends_head(keyword, normalized_head)
+            for keyword in sibling_keywords
+        ):
+            continue
+
+        source_intent = _find_generated_generic_head_intent(source_intents, normalized_head)
+        if source_intent is None:
+            continue
+
+        candidate_row = _generic_head_row_from_intent(
+            intent=source_intent,
+            evidence_pack=evidence_pack,
+            requested_platform_mode=requested_platform_mode,
+        )
+        admitted = _admit_preserved_rows(
+            [candidate_row],
+            evidence_pack=evidence_pack,
+            requested_platform_mode=requested_platform_mode,
+        )
+        if not admitted:
+            continue
+
+        preserved = admitted[0]
+        existing_rows.append(preserved)
+        sibling_keywords.append(normalized_head)
+        existing_keywords.add(lowered_head)
+        preserved_rows.append(preserved)
+        if len(preserved_rows) >= preserved_limit:
+            break
+
+    return existing_rows
+
+
 def _surface_cleanup_rows_with_reasons(
     rows: list[KeywordRow],
     *,
@@ -2891,6 +3271,9 @@ def _surface_cleanup_rows_with_reasons(
         reason = _surface_policy_reason(keyword, row.category, interpretation=interpretation)
         if reason is not None:
             code, detail = reason
+            if code not in HARD_SURFACE_POLICY_CODES:
+                cleaned.append(row)
+                continue
             dropped.append(
                 _slot_drop_entry(
                     keyword=keyword,
@@ -3040,6 +3423,113 @@ def _surface_policy_reason(
         return ("surface_product_purpose_suffix", "season/event purpose suffix")
 
     return None
+
+
+def _generated_generic_surface(intent: CanonicalIntent) -> str:
+    if intent.shared_render is not None and intent.shared_render.keyword:
+        return " ".join(intent.shared_render.keyword.split()).strip()
+    if intent.intent_text:
+        return " ".join(intent.intent_text.split()).strip()
+    if intent.naver_render is not None and intent.naver_render.keyword:
+        return " ".join(intent.naver_render.keyword.split()).strip()
+    if intent.google_render is not None and intent.google_render.keyword:
+        return " ".join(intent.google_render.keyword.split()).strip()
+    return ""
+
+
+def _find_generated_generic_head_intent(
+    intents: list[CanonicalIntent],
+    keyword: str,
+) -> CanonicalIntent | None:
+    lowered_keyword = " ".join(keyword.split()).strip().casefold()
+    for intent in intents:
+        if intent.category != "generic_category":
+            continue
+        if _generated_generic_surface(intent).casefold() == lowered_keyword:
+            return intent
+    return None
+
+
+def _generic_head_row_from_intent(
+    *,
+    intent: CanonicalIntent,
+    evidence_pack: dict[str, Any],
+    requested_platform_mode: str,
+) -> KeywordRow:
+    keyword = _generated_generic_surface(intent)
+    naver_match, google_match = _match_labels("generic_category", keyword, requested_platform_mode)
+    if intent.naver_render is not None and requested_platform_mode in {"naver_sa", "both"}:
+        naver_match = intent.naver_render.match_label
+    if intent.google_render is not None and requested_platform_mode in {"google_sa", "both"}:
+        google_match = intent.google_render.match_label
+    return KeywordRow(
+        url=str(evidence_pack.get("raw_url") or evidence_pack.get("canonical_url") or ""),
+        product_name=_canonical_product_name(evidence_pack),
+        category="generic_category",
+        keyword=keyword,
+        slot_type=intent.slot_type or "generic_type_phrase",
+        naver_match=naver_match,
+        google_match=google_match,
+        reason=intent.reason or f"{keyword} 카테고리 근거 기반",
+        quality_warning=bool(evidence_pack.get("quality_warning", False)),
+        evidence_tier=intent.evidence_tier,
+        quality_score=intent.quality_score,
+        quality_reason=intent.quality_reason,
+    )
+
+
+def _admit_preserved_rows(
+    rows: list[KeywordRow],
+    *,
+    evidence_pack: dict[str, Any],
+    requested_platform_mode: str,
+) -> list[KeywordRow]:
+    clean_rows = _hard_rule_pass(rows, requested_platform_mode=requested_platform_mode)
+    clean_rows, _ = filter_keyword_rows(clean_rows, evidence_pack=evidence_pack)
+    clean_rows, _ = _surface_cleanup_rows_with_reasons(clean_rows, evidence_pack=evidence_pack)
+    return clean_rows
+
+
+def _generic_keyword_tokens(keyword: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9]+|[가-힣]+", " ".join(str(keyword or "").split()).casefold())
+
+
+def _generic_keyword_extends_head(keyword: str, head: str) -> bool:
+    normalized_keyword = " ".join(str(keyword or "").split()).strip()
+    normalized_head = " ".join(str(head or "").split()).strip()
+    if not normalized_keyword or not normalized_head:
+        return False
+    if normalized_keyword.casefold() == normalized_head.casefold():
+        return False
+    if normalized_keyword.casefold().endswith(f" {normalized_head.casefold()}"):
+        return True
+    keyword_tokens = _generic_keyword_tokens(normalized_keyword)
+    head_tokens = _generic_keyword_tokens(normalized_head)
+    if len(keyword_tokens) <= len(head_tokens):
+        return False
+    return bool(head_tokens) and all(token in keyword_tokens for token in head_tokens)
+
+
+def _is_preservable_broad_generic_head(
+    keyword: str,
+    *,
+    interpretation: ProductInterpretation,
+) -> bool:
+    normalized = " ".join(str(keyword or "").split()).strip()
+    lowered = normalized.casefold()
+    if not normalized:
+        return False
+    if _is_measurementish_term(normalized) or _contains_exact_price_surface(normalized) or _is_price_band_surface(normalized):
+        return False
+    if any(token in lowered for token in PURCHASE_SUFFIX_TOKENS):
+        return False
+    brand = interpretation.brand.casefold()
+    if brand and brand in lowered:
+        return False
+    short_name = _short_product_name(interpretation.product_name, interpretation.brand).casefold()
+    if short_name and lowered == short_name:
+        return False
+    return len(_generic_keyword_tokens(normalized)) <= 3
 
 
 def _looks_informational_surface(lowered_keyword: str) -> bool:

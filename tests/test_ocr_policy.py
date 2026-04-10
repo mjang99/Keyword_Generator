@@ -212,6 +212,8 @@ def test_ocr_aggregates_image_level_metadata_from_runner_output() -> None:
     assert decision.image_results[0]["engine_used"] == "PPStructureV3"
     assert decision.image_results[0]["admitted_block_count"] == 1
     assert decision.image_results[0]["rejected_block_count"] == 1
+    assert decision.line_groups
+    assert decision.direct_fact_candidates
 
 
 def test_ocr_rejects_decorative_runtime_assets_before_live_sweep() -> None:
@@ -283,3 +285,102 @@ def test_ocr_preserves_short_detail_lines_for_downstream_filtering() -> None:
         "MUGWORT",
         "Niacinamide",
     ]
+    assert decision.direct_fact_candidates
+
+
+def test_ocr_marks_long_detail_banners_for_tiling() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=600,
+        image_candidates=[
+            {
+                "src": "https://cdn.example.com/long-detail-banner.jpg",
+                "alt": "product detail banner ingredient guide",
+                "width": 900,
+                "height": 3200,
+                "attribute": "src",
+                "detail_hint": True,
+            }
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.ranked_image_candidates[0]["candidate_type"] == "long_detail_banner"
+    assert decision.ranked_image_candidates[0]["needs_tiling"] is True
+
+
+def test_ocr_promotes_explicit_product_field_lines_without_name_overlap() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=400,
+        product_name="Kgen Korean Product Labels 1005 11",
+        primary_product_tokens=["kgen", "1005", "11"],
+        image_candidates=[
+            {
+                "src": "https://cdn.example.com/korean-label.jpg",
+                "alt": "product package label",
+                "width": 1536,
+                "height": 2048,
+                "detail_hint": True,
+            }
+        ],
+        ocr_text_blocks=[
+            {
+                "text": "제품명: 공룡 티링이 키링 가격: 8000원",
+                "source": "image",
+                "image_src": "https://cdn.example.com/korean-label.jpg",
+                "candidate_type": "general_detail_image",
+            }
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.status == "AVAILABLE"
+    assert decision.admitted_blocks[0]["same_product_score"] >= 0.28
+    assert decision.direct_fact_candidates
+
+
+def test_ocr_line_group_can_promote_explicit_field_cluster_to_direct_candidate() -> None:
+    snapshot = _snapshot(
+        page_class_hint="image_heavy_commerce_pdp",
+        usable_text_chars=400,
+        product_name="Kgen Korean Product Labels 1005 11",
+        primary_product_tokens=["kgen", "1005", "11"],
+        image_candidates=[
+            {
+                "src": "https://cdn.example.com/korean-label.jpg",
+                "alt": "product package label",
+                "width": 1536,
+                "height": 2048,
+                "detail_hint": True,
+            }
+        ],
+        ocr_text_blocks=[
+            {
+                "text": "제품명: 공룡 티링이 키링",
+                "source": "image",
+                "image_src": "https://cdn.example.com/korean-label.jpg",
+                "candidate_type": "general_detail_image",
+            },
+            {
+                "text": "재질:아크릴,금속",
+                "source": "image",
+                "image_src": "https://cdn.example.com/korean-label.jpg",
+                "candidate_type": "general_detail_image",
+            },
+            {
+                "text": "가격:8000원",
+                "source": "image",
+                "image_src": "https://cdn.example.com/korean-label.jpg",
+                "candidate_type": "general_detail_image",
+            },
+        ],
+    )
+
+    decision = run_ocr_policy(snapshot)
+
+    assert decision.line_groups
+    assert decision.line_groups[0]["direct_evidence_eligible"] is True
+    assert decision.direct_fact_candidates

@@ -61,11 +61,11 @@ def _intent(category: str, keyword: str, *, slot_type: str = "") -> CanonicalInt
         reason="direct fact",
         evidence_tier="direct",
         allowed_platforms=["naver_sa"],
-        naver_render=PlatformRender(keyword=keyword, match_label="완전일치"),
+        naver_render=PlatformRender(keyword=keyword, match_label="?꾩쟾?쇱튂"),
     )
 
 
-def test_generation_batch_plans_use_cluster_layout() -> None:
+def test_generation_batch_plans_use_category_layout() -> None:
     request = _request()
     category_plan = {
         "brand": 10,
@@ -85,14 +85,26 @@ def test_generation_batch_plans_use_cluster_layout() -> None:
     batches = _generation_batch_plans(category_plan=category_plan, slot_plan=slot_plan)
 
     batch_names = [batch["name"] for batch in batches]
-    assert batch_names == ["cluster_a", "cluster_b", "cluster_c", "cluster_d"]
-    assert batches[0]["categories"] == ("brand", "generic_category", "purchase_intent")
-    assert batches[1]["categories"] == ("feature_attribute", "benefit_price")
-    assert batches[2]["categories"] == ("long_tail", "problem_solution", "season_event")
-    assert batches[3]["categories"] == ("competitor_comparison", NEGATIVE_CATEGORY)
+    assert batch_names == [
+        "category_brand",
+        "category_generic_category",
+        "category_feature_attribute",
+        "category_competitor_comparison",
+        "category_purchase_intent",
+        "category_long_tail",
+        "category_benefit_price",
+        "category_season_event",
+        "category_problem_solution",
+        "category_negative",
+    ]
+    assert batches[0]["categories"] == ("brand",)
+    assert batches[1]["categories"] == ("generic_category",)
+    assert batches[2]["categories"] == ("feature_attribute",)
+    assert batches[3]["categories"] == ("competitor_comparison",)
+    assert batches[-1]["categories"] == (NEGATIVE_CATEGORY,)
 
 
-def test_generate_keywords_uses_cluster_generation_and_splits_weak_clusters(monkeypatch) -> None:
+def test_generate_keywords_uses_category_generation_fanout(monkeypatch) -> None:
     monkeypatch.setenv("KEYWORD_GENERATOR_GENERATION_MODE", "bedrock")
     call_log: list[tuple[str, tuple[str, ...]]] = []
 
@@ -113,15 +125,13 @@ def test_generate_keywords_uses_cluster_generation_and_splits_weak_clusters(monk
         categories = tuple(target_categories or ())
         name = str(batch_name or "default")
         call_log.append((name, categories))
-        if name == "cluster_c":
-            intents = [_intent("long_tail", "Apple Pencil note taking", slot_type="use_case_phrase")]
-        elif name == "cluster_c_split_1":
+        if name == "category_problem_solution":
             intents = [
-                _intent("long_tail", "Apple Pencil precision writing", slot_type="use_case_phrase"),
                 _intent("problem_solution", "precision writing stylus pen", slot_type="problem_noun_phrase"),
+                _intent("problem_solution", "fine tip stylus pen", slot_type="problem_noun_phrase"),
             ]
-        elif name == "cluster_c_split_2":
-            intents = [_intent("season_event", "학생 필기 stylus pen", slot_type="seasonal_context")]
+        elif name == "category_season_event":
+            intents = [_intent("season_event", "?숈깮 ?꾧린 stylus pen", slot_type="seasonal_context")]
         else:
             intents = []
             for category in categories:
@@ -163,13 +173,17 @@ def test_generate_keywords_uses_cluster_generation_and_splits_weak_clusters(monk
     result = generate_keywords(_request())
 
     assert result.status == "COMPLETED"
-    assert ("cluster_a", ("brand", "generic_category", "purchase_intent")) in call_log
-    assert ("cluster_b", ("feature_attribute", "benefit_price")) in call_log
-    assert ("cluster_c", ("long_tail", "problem_solution", "season_event")) in call_log
-    assert ("cluster_d", ("competitor_comparison", NEGATIVE_CATEGORY)) in call_log
-    assert ("cluster_c_split_1", ("long_tail", "problem_solution")) in call_log
-    assert ("cluster_c_split_2", ("season_event",)) in call_log
-    assert "cluster_c" in result.debug_payload["generation"]["split_batch_names"]
+    assert ("category_brand", ("brand",)) in call_log
+    assert ("category_generic_category", ("generic_category",)) in call_log
+    assert ("category_feature_attribute", ("feature_attribute",)) in call_log
+    assert ("category_competitor_comparison", ("competitor_comparison",)) in call_log
+    assert ("category_purchase_intent", ("purchase_intent",)) in call_log
+    assert ("category_long_tail", ("long_tail",)) in call_log
+    assert ("category_benefit_price", ("benefit_price",)) in call_log
+    assert ("category_season_event", ("season_event",)) in call_log
+    assert ("category_problem_solution", ("problem_solution",)) in call_log
+    assert ("category_negative", (NEGATIVE_CATEGORY,)) in call_log
+    assert result.debug_payload["generation"]["split_batch_names"] == []
 
 
 def test_generate_keywords_records_failed_batch_context_on_parse_error(monkeypatch) -> None:
@@ -193,6 +207,6 @@ def test_generate_keywords_records_failed_batch_context_on_parse_error(monkeypat
     assert result.validation_report is not None
     assert result.validation_report.failure_code == "generation_rule_violation"
     error = result.debug_payload["generation"]["error"]
-    assert error["batch_name"] == "cluster_a"
-    assert error["categories"] == ["brand", "generic_category", "purchase_intent"]
+    assert error["batch_name"] == "category_brand"
+    assert error["categories"] == ["brand"]
     assert error["response_text"] == '{"broken":"shape"}'

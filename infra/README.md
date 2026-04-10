@@ -48,6 +48,13 @@ The current deployable baseline matches the code that exists today:
 
 The design doc still describes a future split with dedicated OCR and generation workers. Those container images are reserved with ECR repositories now, but the Terraform baseline does not create those Lambda functions yet because the current Python handlers do not expose them as standalone entrypoints.
 
+If you deploy today, OCR still runs inside `collection_worker` when the OCR subprocess is enabled. This is the important operational distinction:
+
+- current baseline: `collection_worker` may launch PaddleOCR locally in-process and then continue straight into evidence/generation
+- future target: `collection_worker -> OCRQueue -> ocr-worker -> GenerationQueue -> generation-worker`
+
+Do not assume that provisioning the `ocr` queue or ECR repos means OCR is already isolated at runtime. In the current baseline, OCR capacity, timeout, and memory planning still apply to the deployed `collection_worker`.
+
 ## Runtime Env Mapping
 
 The current Python runtime bootstrap reads these environment variables:
@@ -66,6 +73,30 @@ The current Python runtime bootstrap reads these environment variables:
 - `CACHE_VALIDITY_MIN_AGE_DAYS`
 
 The runtime ignores the OCR and generation queue URLs today, but Terraform still exports them because the design contract and future worker split already reserve those stages.
+
+To enable OCR in the current baseline, also set:
+
+- `KEYWORD_GENERATOR_OCR_ENABLED`
+- `KEYWORD_GENERATOR_OCR_PYTHON`
+- `KEYWORD_GENERATOR_OCR_SITE_PACKAGES`
+- `KEYWORD_GENERATOR_OCR_MAX_IMAGES`
+- `KEYWORD_GENERATOR_OCR_TIMEOUT_SECONDS`
+- `KEYWORD_GENERATOR_OCR_STRUCTURED_ENABLED`
+- `KEYWORD_GENERATOR_OCR_RECTIFY_ENABLED`
+- `KEYWORD_GENERATOR_OCR_MULTIPASS_ENABLED`
+- `KEYWORD_GENERATOR_OCR_TILING_ENABLED`
+- `KEYWORD_GENERATOR_OCR_LANGUAGE_ROUTING_ENABLED`
+- `KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED` for local/dev only
+
+Recommended production posture for the current baseline:
+
+- keep `KEYWORD_GENERATOR_OCR_ENABLED=1`
+- keep `KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED=0`
+- enable `KEYWORD_GENERATOR_OCR_STRUCTURED_ENABLED=1`
+- keep `KEYWORD_GENERATOR_OCR_MULTIPASS_ENABLED=1`
+- keep `KEYWORD_GENERATOR_OCR_TILING_ENABLED=1`
+- leave `KEYWORD_GENERATOR_OCR_LANGUAGE_ROUTING_ENABLED=0` unless you explicitly validate the mixed-language path
+- size `collection_worker` memory/timeout for OCR load, because there is no standalone OCR Lambda yet
 
 ## Feature Flags
 

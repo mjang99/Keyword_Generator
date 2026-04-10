@@ -1,0 +1,51 @@
+{
+  "case_id": "iphone16_live",
+  "source_path": "tests/fixtures/iphone16_live_source.json",
+  "requested_platform_mode": "naver_sa",
+  "notes": "Prompt-tuning baseline for the Apple iPhone 16 PDP. This set measures buyer-query realism rather than floor completion.",
+  "platform_expectations": {
+    "naver_sa": {
+      "must_keep": [
+        "아이폰 16",
+        "아이폰16",
+        "Apple iPhone 16",
+        "애플 아이폰16",
+        "iPhone 16",
+        "아이폰16 가격",
+        "아이폰16 512GB",
+        "아이폰16 울트라마린",
+        "아이폰16 틸",
+        "아이폰16 핑크",
+        "아이폰16 화이트",
+        "아이폰16 블랙",
+        "아이폰16 5G",
+        "스마트폰",
+        "5G 스마트폰"
+      ],
+      "must_not_emit": [
+        "CDMA 아이폰16",
+        "CDMA 스마트폰",
+        "아이폰16 10Gb",
+        "10GB 스마트폰",
+        "울트라마린 스마트폰",
+        "틸 스마트폰",
+        "핑크 스마트폰",
+        "화이트 스마트폰",
+        "블랙 스마트폰",
+        "무료배송 아이폰16",
+        "아이폰16 신제품"
+      ],
+      "forbidden_substrings": [
+        "CDMA",
+        "10Gb",
+        "무료배송"
+      ],
+      "required_categories": [
+        "brand",
+        "generic_category",
+        "feature_attribute",
+        "benefit_price"
+      ]
+    }
+  }
+}

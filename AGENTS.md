@@ -1,78 +1,70 @@
-# Codex Agent Guide
+﻿# Codex Agent Guide
 
-## 역할
+## ??븷
 
-Codex는 구현 담당이다. Claude는 supervisor 역할로 설계 결정과 리뷰를 담당한다.
+Codex??援ы쁽 ?대떦?대떎. Claude??supervisor ??븷濡??ㅺ퀎 寃곗젙怨?由щ럭瑜??대떦?쒕떎.
 
 ## Source Of Truth
 
-- `artifacts/`: 수정 금지. 원문 요구사항 기준.
-- `docs/`: 설계·해석 계층. 구현 전 반드시 확인.
-- `tasks/`: 작업 단위. TASK-xxx 기준으로 범위 통제.
+- `artifacts/`: ?섏젙 湲덉?. ?먮Ц ?붽뎄?ы빆 湲곗?.
+- `docs/`: ?ㅺ퀎쨌?댁꽍 怨꾩링. 援ы쁽 ??諛섎뱶???뺤씤.
+- `tasks/`: ?묒뾽 ?⑥쐞. TASK-xxx 湲곗??쇰줈 踰붿쐞 ?듭젣.
 
-## 작업 시작 순서
+## ?묒뾽 ?쒖옉 ?쒖꽌
 
-1. `docs/ACTIVE_HANDOFF.md` — 현재 목표와 blocker 확인
-2. 해당 `tasks/TASK-xxx.md` — 스코프와 완료 기준 확인
-3. `docs/URL_KEYWORD_GENERATOR_SERVICE_DESIGN.md` — 설계 앵커 확인
-4. 필요 시 `docs/OPEN_QUESTIONS.md` — 미확정 항목 확인
+1. `docs/ACTIVE_HANDOFF.md` ???꾩옱 紐⑺몴? blocker ?뺤씤
+2. ?대떦 `tasks/TASK-xxx.md` ???ㅼ퐫?꾩? ?꾨즺 湲곗? ?뺤씤
+3. `docs/URL_KEYWORD_GENERATOR_SERVICE_DESIGN.md` ???ㅺ퀎 ?듭빱 ?뺤씤
+4. ?꾩슂 ??`docs/OPEN_QUESTIONS.md` ??誘명솗????ぉ ?뺤씤
 
-## README 최신화 규칙
+## README 理쒖떊??洹쒖튃
 
-`README.md`는 InsightChat 연동 담당자와 신규 합류자가 가장 먼저 읽는 문서다. 구현 중 아래 항목이 바뀌면 Claude에게 보고하고 README.md를 함께 업데이트한다.
+`README.md`??InsightChat ?곕룞 ?대떦?먯? ?좉퇋 ?⑸쪟?먭? 媛??癒쇱? ?쎈뒗 臾몄꽌?? 援ы쁽 以??꾨옒 ??ぉ??諛붾뚮㈃ Claude?먭쾶 蹂닿퀬?섍퀬 README.md瑜??④퍡 ?낅뜲?댄듃?쒕떎.
 
-- API 엔드포인트 또는 요청/응답 스키마 변경
-- 출력 스키마 컬럼 변경 (고정 스키마이므로 변경 시 Claude 승인 필요)
-- Job 상태 enum 추가·삭제·이름 변경
-- 인증 방식 변경
-- 기술 스택 변경 (언어 버전, 주요 라이브러리, 인프라)
-- 저장소 구조 변경 (디렉터리 추가·삭제)
+- API ?붾뱶?ъ씤???먮뒗 ?붿껌/?묐떟 ?ㅽ궎留?蹂寃?- 異쒕젰 ?ㅽ궎留?而щ읆 蹂寃?(怨좎젙 ?ㅽ궎留덉씠誘濡?蹂寃???Claude ?뱀씤 ?꾩슂)
+- Job ?곹깭 enum 異붽?쨌??젣쨌?대쫫 蹂寃?- ?몄쬆 諛⑹떇 蹂寃?- 湲곗닠 ?ㅽ깮 蹂寃?(?몄뼱 踰꾩쟾, 二쇱슂 ?쇱씠釉뚮윭由? ?명봽??
+- ??μ냼 援ъ“ 蹂寃?(?붾젆?곕━ 異붽?쨌??젣)
 
-## 재발 방지 규칙
+## ?щ컻 諛⑹? 洹쒖튃
 
-구현 중 발생한 실수와 결정 사항은 모두 기록되어 있다. 아래 규칙을 반드시 따른다.
+援ы쁽 以?諛쒖깮???ㅼ닔? 寃곗젙 ?ы빆? 紐⑤몢 湲곕줉?섏뼱 ?덈떎. ?꾨옒 洹쒖튃??諛섎뱶???곕Ⅸ??
 
-1. **FR 정독 전 결정 금지**: `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md` 정독 전 모델·라이브러리·버전을 코드나 문서에 쓰지 않는다.
-2. **확정되지 않은 항목은 구현하지 않는다**: `docs/OPEN_QUESTIONS.md`에서 "미정"인 항목은 Claude에게 먼저 확인한다.
-3. **버전 결정은 근거 필수**: 라이브러리 버전을 선택할 때 PyPI wheel 지원 현황을 확인하고 근거를 주석이나 문서에 남긴다.
-4. **스코프 확장 금지**: task 파일의 Scope와 Done When을 벗어나는 작업은 Claude에게 먼저 올린다.
+1. **FR ?뺣룆 ??寃곗젙 湲덉?**: `artifacts/REQUIREMENTS_KEYWORD_GENERATOR.md` ?뺣룆 ??紐⑤뜽쨌?쇱씠釉뚮윭由?룸쾭?꾩쓣 肄붾뱶??臾몄꽌???곗? ?딅뒗??
+2. **?뺤젙?섏? ?딆? ??ぉ? 援ы쁽?섏? ?딅뒗??*: `docs/OPEN_QUESTIONS.md`?먯꽌 "誘몄젙"????ぉ? Claude?먭쾶 癒쇱? ?뺤씤?쒕떎.
+3. **踰꾩쟾 寃곗젙? 洹쇨굅 ?꾩닔**: ?쇱씠釉뚮윭由?踰꾩쟾???좏깮????PyPI wheel 吏???꾪솴???뺤씤?섍퀬 洹쇨굅瑜?二쇱꽍?대굹 臾몄꽌???④릿??
+4. **?ㅼ퐫???뺤옣 湲덉?**: task ?뚯씪??Scope? Done When??踰쀬뼱?섎뒗 ?묒뾽? Claude?먭쾶 癒쇱? ?щ┛??
 
-## Claude에게 올려야 하는 경우
+## Claude?먭쾶 ?щ젮???섎뒗 寃쎌슦
 
-- 요구사항 해석이 2가지 이상으로 갈릴 때
-- 설계 문서에 명시되지 않은 결정이 필요할 때
-- API 경계, auth, storage, deployment 관련 결정
-- 범위 확대나 큰 리팩터링이 필요할 때
-- 구현 완료 후 설계 관점 최종 확인이 필요할 때
+- ?붽뎄?ы빆 ?댁꽍??2媛吏 ?댁긽?쇰줈 媛덈┫ ??- ?ㅺ퀎 臾몄꽌??紐낆떆?섏? ?딆? 寃곗젙???꾩슂????- API 寃쎄퀎, auth, storage, deployment 愿??寃곗젙
+- 踰붿쐞 ?뺣?????由ы뙥?곕쭅???꾩슂????- 援ы쁽 ?꾨즺 ???ㅺ퀎 愿??理쒖쥌 ?뺤씤???꾩슂????
+## 湲곗닠 ?ㅽ깮 (?뺤젙)
 
-## 기술 스택 (확정)
-
-| 항목 | 결정 |
+| ??ぉ | 寃곗젙 |
 | --- | --- |
-| 언어 | Python 3.13 |
-| 스크래핑 | Crawl4AI + Playwright |
+| ?몄뼱 | Python 3.13 |
+| ?ㅽ겕?섑븨 | Crawl4AI + Playwright |
 | OCR | PaddleOCR PP-OCRv5 |
-| LLM | AWS Bedrock Claude Sonnet 3.5 (FR-14, 단일 모델) |
-| 인프라 | AWS Lambda Arm64, SQS, DynamoDB, S3, SES |
-| 인증 | Cognito + Naver/Google OAuth |
-| Bedrock 호출 | max_tokens 반드시 명시 (미설정 시 64,000 예약) |
-| Bedrock 엔드포인트 | Geo cross-region 필수 (On-demand 50 RPM 부족) |
+| LLM | AWS Bedrock Claude Sonnet 3.5 (FR-14, ?⑥씪 紐⑤뜽) |
+| ?명봽??| AWS Lambda Arm64, SQS, DynamoDB, S3, SES |
+| ?몄쬆 | Cognito + Naver/Google OAuth |
+| Bedrock ?몄텧 | max_tokens 諛섎뱶??紐낆떆 (誘몄꽕????64,000 ?덉빟) |
+| Bedrock ?붾뱶?ъ씤??| Geo cross-region ?꾩닔 (On-demand 50 RPM 遺議? |
 
-## 출력 스키마 (고정, 수정 금지)
+## 異쒕젰 ?ㅽ궎留?(怨좎젙, ?섏젙 湲덉?)
 
 ```text
 url, product_name, category, keyword, naver_match, google_match, reason, quality_warning
 ```
 
-## 완료 보고 형식
+## ?꾨즺 蹂닿퀬 ?뺤떇
 
-- 완료된 task 파일의 `status`를 `done`으로 변경
-- `docs/ACTIVE_HANDOFF.md` Current Status 업데이트
-- Claude 리뷰가 필요한 판단 포인트 정리 후 전달
+- ?꾨즺??task ?뚯씪??`status`瑜?`done`?쇰줈 蹂寃?- `docs/ACTIVE_HANDOFF.md` Current Status ?낅뜲?댄듃
+- Claude 由щ럭媛 ?꾩슂???먮떒 ?ъ씤???뺣━ ???꾨떖
 
 ## Added Recurrence Rules (2026-04-08)
 
-1. **No domain-agnostic hardcoded semantic boosts**: do not add or keep fixed keyword maps that promote `benefit`, `problem_solution`, `use_case`, `usage`, `audience`, or similar facts from broad tokens like `보습`, `건조`, `장벽`, `야간`, `수면`. Semantic uplift must be grounded in structure, explicit phrases, or page-class/domain-specific evidence.
+1. **No domain-agnostic hardcoded semantic boosts**: do not add or keep fixed keyword maps that promote `benefit`, `problem_solution`, `use_case`, `usage`, `audience`, or similar facts from broad tokens like `蹂댁뒿`, `嫄댁“`, `?λ꼍`, `?쇨컙`, `?섎㈃`. Semantic uplift must be grounded in structure, explicit phrases, or page-class/domain-specific evidence.
 2. **Do not trade quality for floor**: when the only way to reach count floor is filler, generic scaffolds, self-comparison, or hardcoded boosts, keep the shortfall and fail generation instead.
 3. **UTF-8 write safety is mandatory**: when editing Python, Markdown, JSON, YAML, or test fixtures, save as UTF-8 and immediately run a syntax/import check (`py_compile` or pytest collection) before moving on.
 4. **When a bug is found, codify the prevention in the same task**: update `ACTIVE_HANDOFF.md` and the relevant operator guide (`AGENTS.md` and/or `CLAUDE.md`) in the same change, not later.
@@ -98,10 +90,20 @@ url, product_name, category, keyword, naver_match, google_match, reason, quality
 20. **Do not lose raw Bedrock responses on parse failure**: if a generation, dedup, or supplementation response cannot be parsed, preserve the raw `response_text`, model metadata, and batch context in `debug_payload` so live failures can be diagnosed from artifacts without reproducing the exact call again.
 21. **Treat lightweight Bedrock wrapper drift as a parser concern first**: when live Bedrock returns the same keyword payload under `keywords[]` or another lightweight wrapper, widen the parser before tightening prompts. Do not leave recoverable wrapper drift as a hard runtime failure.
 22. **Tighten category quality with evidence/shape rules, not literal blacklist churn**: when a category emits noisy rows, strengthen admissibility around grounded evidence sources and allowed shapes. Do not paper over the problem by hardcoding individual bad strings one by one.
-23. **Do not remap concern semantics through handcrafted phrase dictionaries**: deterministic generation may normalize formatting or strip generic context, but it must not translate concern evidence into preferred phrases through case-by-case mappings such as `당김 -> 피부 당김` or `장벽 -> 장벽 케어`.
+23. **Do not remap concern semantics through handcrafted phrase dictionaries**: deterministic generation may normalize formatting or strip generic context, but it must not translate concern evidence into preferred phrases through case-by-case mappings such as `?밴? -> ?쇰? ?밴?` or `?λ꼍 -> ?λ꼍 耳??.
 24. **Do not keep dead semantic-boost helpers around**: if a broad uplift helper or category-alias map is no longer allowed, remove the helper and its tests rather than leaving it dormant in the file for later reuse.
 25. **Audience/use-case normalization is formatting-only**: deterministic generation may trim whitespace or preserve observed phrasing, but it must not expand raw `audience` or `use_case` facts into `<audience> <category>`, `<use_case> <category>`, or similar category-led scaffolds.
 26. **Problem-slot seeds must stay concern-grounded**: do not mix `audience` or `usage_context` values into deterministic `problem_noun_phrase` seeds. Problem-slot expansion must start from explicit concern/problem evidence.
-25. **Do not split or embellish explicit audience/concern facts in deterministic generation**: keep observed audience and concern phrases intact. Do not expand `건성 복합성 피부` into separate audience rows, do not strip temporal clauses like `수면 중`, and do not append handcrafted suffixes like `케어` just to make the surface sound more search-like.
-26. **Do not infer canonical category from product-name token lore**: deterministic generation must not guess category labels from ad hoc product-name token maps such as `mask -> 스킨케어` or `earbud -> 무선 이어폰`. Prefer explicit category evidence and generic evidence-ordering heuristics over handcrafted token-to-category rewrites.
-27. **Do not auto-promote broad audience evidence into category phrases**: broad audience values like `건성 복합성 피부` may remain as observed evidence, but deterministic helpers must not synthesize category-appended surfaces such as `건성 복합성 피부 마스크` unless the page explicitly contains that phrase.
+25. **Do not split or embellish explicit audience/concern facts in deterministic generation**: keep observed audience and concern phrases intact. Do not expand `嫄댁꽦 蹂듯빀???쇰?` into separate audience rows, do not strip temporal clauses like `?섎㈃ 以?, and do not append handcrafted suffixes like `耳?? just to make the surface sound more search-like.
+26. **Do not infer canonical category from product-name token lore**: deterministic generation must not guess category labels from ad hoc product-name token maps such as `mask -> ?ㅽ궓耳?? or `earbud -> 臾댁꽑 ?댁뼱??. Prefer explicit category evidence and generic evidence-ordering heuristics over handcrafted token-to-category rewrites.
+27. **Do not auto-promote broad audience evidence into category phrases**: broad audience values like `嫄댁꽦 蹂듯빀???쇰?` may remain as observed evidence, but deterministic helpers must not synthesize category-appended surfaces such as `嫄댁꽦 蹂듯빀???쇰? 留덉뒪?? unless the page explicitly contains that phrase.
+28. **Do not expand weak preservation or convenience copy into situational queries**: evidence such as `냉동 보관`, storage guidance, or convenience phrasing must not be turned into `나들이`, `캠핑`, `피크닉`, `여행`, or similar situational/seasonal keywords unless those exact situations are explicitly grounded on the page.
+29. **Public OCR benchmark adapters must inspect dataset GT schema before assuming same-stem labels**: some product OCR datasets ship manifest-level annotations instead of one label file per image. `Unitail-OCR` gallery uses COCO-style `ocr_gt.json`; benchmark code must group `annotations[*].text-words` by `image_id` into per-image reference text before scoring.
+29. **Local OCR benchmarks must use the Windows-safe real engine path and explicit speed mode**: on Windows, run OCR benchmarks through the base interpreter from `.venv-paddleocr/pyvenv.cfg`, prepend `.venv-paddleocr/Lib/site-packages` to `PYTHONPATH`, keep `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=1`, and benchmark one product sample at a time with `scripts/evaluate_ocr_benchmark.py --product-label ...`. If a very tall detail banner is slowing iteration, use `--product-max-side` as an explicit speed-vs-coverage tradeoff and record the resized dimensions with the result.
+30. **Do not pay every OCR multipass cost once a strong pass exists**: multi-pass OCR is allowed for quality recovery, but runner logic must stop after the first pass that already yields strong text volume/coverage for the candidate type. Do not force every contrast/upscale fallback on large images if the original pass is already good enough.
+31. **Public OCR benchmark roots must exclude local preprocessing artifacts**: when benchmarking cloned or extracted public datasets, ignore locally generated files such as `*_enhance_contrast`, `*_upscale_x2`, tiles, or similar derivative images. Benchmark rows must come from source dataset assets only.
+32. **Do not require page-title token overlap for same-page OCR label/spec fields**: on ranked same-page detail images, explicit product field labels such as `제품명`, `품질표시사항`, `재질`, `제조국`, `가격`, `ingredient(s)`, or `material` are valid deterministic same-product signals. Do not reject these blocks solely because they omit the page-title tokens verbatim.
+33. **Recompute trusted OCR eligibility at the merged line-group level**: when short same-page label/spec blocks are grouped, evaluate the merged text quality and direct-candidate eligibility from the combined line-group text. Do not inherit only the strongest child block score if that would hide an informative grouped field cluster.
+34. **Windows OCR subprocesses must not rely on console-default decoding**: when OCR helpers spawn Python subprocesses on Windows, capture stdout/stderr as bytes, set `PYTHONIOENCODING=utf-8`, and decode explicitly with a safe fallback. Do not depend on `cp949`/console defaults for JSON payloads from OCR workers.
+35. **Image-level OCR subprocess timeouts must degrade to error payloads, not crash the sweep**: quality-first OCR may spend a long time on hard detail assets, but a single timed-out image must be recorded as a failed OCR result and the broader benchmark/runtime pass must continue.
+

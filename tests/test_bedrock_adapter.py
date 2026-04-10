@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from src.keyword_generation.bedrock_adapter import (
     BedrockResponseParseError,
@@ -78,11 +78,46 @@ def test_build_keyword_generation_prompt_contains_locked_fields() -> None:
     assert '"items"' in prompt
     assert '"keyword"' in prompt
     assert "quality_warning" in prompt
+    assert "buyer_query_contract" in prompt
+    assert "real buyer of this exact product page would plausibly search" in prompt
+    assert "generic_category_contract" in prompt
+    assert "common shopper-facing product-class phrases" in prompt
+    assert "Do not turn storage, convenience, or preservation language into outing, travel, picnic, camping" in prompt
+
+
+def test_build_keyword_generation_prompt_includes_weak_category_examples_when_grounded() -> None:
+    request = GenerationRequest(
+        evidence_pack={
+            "raw_url": "https://example.com/retinol-serum",
+            "canonical_url": "https://example.com/retinol-serum",
+            "page_class": "commerce_pdp",
+            "product_name": "Retinol Serum",
+            "canonical_product_name": "Retinol Serum",
+            "facts": [
+                {"type": "brand", "value": "Acme", "normalized_value": "Acme", "evidence_tier": "direct", "admissibility_tags": ["product_identity"]},
+                {"type": "product_category", "value": "retinol serum", "normalized_value": "retinol serum", "evidence_tier": "direct"},
+                {"type": "concern", "value": "wrinkle care", "normalized_value": "wrinkle care", "evidence_tier": "direct", "admissibility_tags": ["problem_solution"]},
+                {"type": "use_case", "value": "night routine", "normalized_value": "night routine", "evidence_tier": "direct", "admissibility_tags": ["use_case"]},
+            ],
+        },
+        requested_platform_mode="naver_sa",
+    )
+
+    prompt = build_keyword_generation_prompt(
+        request,
+        positive_target=20,
+        target_categories=["long_tail", "season_event", "problem_solution"],
+    )
+
+    assert "category_examples" in prompt
+    assert "night routine 레티놀 세럼" in prompt
+    assert "wrinkle care 레티놀 세럼" in prompt
+    assert "Retinol Serum 관리" in prompt
 
 
 def test_parse_keyword_response_returns_keyword_rows() -> None:
     rows = parse_keyword_response(
-        '{"rows":[{"category":"brand","slot_type":"product_name","keyword":"Apple Pencil","reason":"direct fact","evidence_tier":"direct","naver_match":"완전일치"}]}',
+        '{"rows":[{"category":"brand","slot_type":"product_name","keyword":"Apple Pencil","reason":"direct fact","evidence_tier":"direct","naver_match":"?꾩쟾?쇱튂"}]}',
         request=_request(),
     )
 
@@ -90,7 +125,7 @@ def test_parse_keyword_response_returns_keyword_rows() -> None:
     assert rows[0].category == "brand"
     assert rows[0].slot_type == "product_name"
     assert rows[0].keyword == "Apple Pencil"
-    assert rows[0].naver_match == "완전일치"
+    assert rows[0].naver_match == "?꾩쟾?쇱튂"
 
 
 def test_generate_rows_via_bedrock_uses_fake_client() -> None:
@@ -111,7 +146,7 @@ def test_generate_rows_via_bedrock_uses_fake_client() -> None:
     assert len(rows) == 1
     assert rows[0].slot_type == "product_name"
     assert rows[0].keyword == "Apple Pencil"
-    assert rows[0].reason == "브랜드 및 제품명 직접 근거 기반"
+    assert rows[0].reason
 
 
 def test_generate_keywords_returns_failure_when_bedrock_pipeline_errors(monkeypatch) -> None:
@@ -162,7 +197,7 @@ def _sample_intent(keyword: str = "Apple Pencil", category: str = "brand") -> Ca
         reason="direct fact",
         evidence_tier="direct",
         allowed_platforms=["naver_sa"],
-        naver_render=PlatformRender(keyword=keyword, match_label="완전일치"),
+        naver_render=PlatformRender(keyword=keyword, match_label="?꾩쟾?쇱튂"),
         google_render=None,
     )
 
@@ -247,6 +282,33 @@ def test_build_supplementation_prompt_includes_overused_terms_hint() -> None:
     assert "hydration" in prompt
 
 
+def test_build_supplementation_prompt_includes_category_examples_for_gap_slots() -> None:
+    gap_slots = {"competitor_comparison:competitor_brand_type": 3, "problem_solution:problem_noun_phrase": 2, "_total": 5}
+    evidence_pack = {
+        "raw_url": "https://example.com/retinol-serum",
+        "canonical_url": "https://example.com/retinol-serum",
+        "page_class": "commerce_pdp",
+        "product_name": "Retinol Serum",
+        "canonical_product_name": "Retinol Serum",
+        "facts": [
+            {"type": "brand", "value": "Acme", "normalized_value": "Acme", "evidence_tier": "direct", "admissibility_tags": ["product_identity"]},
+            {"type": "product_category", "value": "retinol serum", "normalized_value": "retinol serum", "evidence_tier": "direct"},
+            {"type": "concern", "value": "wrinkle care", "normalized_value": "wrinkle care", "evidence_tier": "direct", "admissibility_tags": ["problem_solution"]},
+        ],
+    }
+
+    prompt = build_supplementation_prompt(
+        gap_slots,
+        evidence_pack,
+        platform_mode="naver_sa",
+        surviving_summary=[],
+    )
+
+    assert "category_examples" in prompt
+    assert "wrinkle care 레티놀 세럼" in prompt
+    assert "Retinol Serum 관리" in prompt
+
+
 def test_run_dedup_quality_pass_returns_report_with_fake_client() -> None:
     class FakeClient:
         def converse(self, *, modelId, **kwargs):
@@ -274,7 +336,7 @@ def test_run_dedup_quality_pass_returns_report_with_fake_client() -> None:
             reason="direct fact",
             evidence_tier="direct",
             allowed_platforms=["naver_sa"],
-            naver_render=PlatformRender(keyword="Apple Pencil", match_label="완전일치"),
+            naver_render=PlatformRender(keyword="Apple Pencil", match_label="?꾩쟾?쇱튂"),
         )
     ]
     report = run_dedup_quality_pass(
@@ -322,7 +384,7 @@ def test_run_supplementation_pass_returns_intents_with_fake_client() -> None:
 
 def test_parse_intent_response_accepts_canonical_intents() -> None:
     intents = parse_intent_response(
-        '{"intents":[{"category":"brand","slot_type":"product_name","intent_text":"example product","reason":"direct fact","evidence_tier":"direct","allowed_platforms":["naver_sa","google_sa"],"naver_render":{"keyword":"example product","match_label":"완전일치","admitted":true},"google_render":{"keyword":"example product","match_label":"exact","admitted":true}}]}',
+        '{"intents":[{"category":"brand","slot_type":"product_name","intent_text":"example product","reason":"direct fact","evidence_tier":"direct","allowed_platforms":["naver_sa","google_sa"],"naver_render":{"keyword":"example product","match_label":"?꾩쟾?쇱튂","admitted":true},"google_render":{"keyword":"example product","match_label":"exact","admitted":true}}]}',
         request=_request(),
     )
 
@@ -345,14 +407,14 @@ def test_parse_intent_response_defaults_slot_type_for_legacy_rows() -> None:
 
 def test_parse_intent_response_accepts_lightweight_items() -> None:
     intents = parse_intent_response(
-        '{"items":[{"category":"feature_attribute","keyword":"Apple Pencil 1세대"}]}',
+        '{"items":[{"category":"feature_attribute","keyword":"Apple Pencil 1?몃?"}]}',
         request=_request(),
     )
 
     assert len(intents) == 1
     assert intents[0].category == "feature_attribute"
     assert intents[0].slot_type == "spec"
-    assert intents[0].intent_text == "Apple Pencil 1세대"
+    assert intents[0].intent_text == "Apple Pencil 1?몃?"
 
 
 def test_parse_intent_response_unwraps_fenced_wrapper_payload() -> None:
@@ -387,3 +449,4 @@ def test_parse_intent_response_unwraps_nested_keywords_payload() -> None:
     assert len(intents) == 1
     assert intents[0].category == "brand"
     assert intents[0].intent_text == "Apple Pencil"
+

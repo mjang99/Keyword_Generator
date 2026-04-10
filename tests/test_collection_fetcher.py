@@ -4,7 +4,9 @@ from io import BytesIO
 from urllib.error import HTTPError
 from urllib.error import URLError
 
-from src.collection import DEFAULT_FETCH_PROFILES, HttpPageFetcher
+import pytest
+
+from src.collection import Crawl4AiPageFetcher, DEFAULT_FETCH_PROFILES, HttpPageFetcher
 
 
 class _FakeResponse:
@@ -93,3 +95,46 @@ def test_http_page_fetcher_returns_html_from_http_error_body() -> None:
     assert result.http_status == 403
     assert "access denied" in result.html.lower()
     assert result.fetch_profile_used == "desktop_chrome"
+
+
+def test_crawl4ai_page_fetcher_returns_rendered_html_in_html_fetch_result() -> None:
+    def fake_crawl(raw_url: str) -> dict:
+        assert raw_url == "https://example.com/rendered"
+        return {
+            "final_url": "https://example.com/rendered?variant=1",
+            "html": "<html><head><title>Rendered</title></head><body><button>Buy now</button></body></html>",
+            "content_type": "text/html; charset=utf-8",
+            "http_status": 200,
+            "response_headers": {"Content-Type": "text/html; charset=utf-8"},
+            "sidecars": {
+                "cleaned_html": "<html><body>Buy now</body></html>",
+                "markdown": "Buy now",
+                "fit_markdown": "Buy now",
+                "screenshot_present": True,
+                "media_summary": {"images": 2, "videos": 0, "audios": 0},
+            },
+        }
+
+    fetcher = Crawl4AiPageFetcher(run_crawl=fake_crawl)
+
+    result = fetcher.fetch("https://example.com/rendered")
+
+    assert "Buy now" in result.html
+    assert result.final_url == "https://example.com/rendered?variant=1"
+    assert result.http_status == 200
+    assert result.content_type == "text/html; charset=utf-8"
+    assert result.fetch_profile_used == "crawl4ai_render"
+    assert fetcher.last_sidecars == {
+        "cleaned_html": "<html><body>Buy now</body></html>",
+        "markdown": "Buy now",
+        "fit_markdown": "Buy now",
+        "screenshot_present": True,
+        "media_summary": {"images": 2, "videos": 0, "audios": 0},
+    }
+
+
+def test_crawl4ai_page_fetcher_raises_runtime_error_on_crawl_failure() -> None:
+    fetcher = Crawl4AiPageFetcher(run_crawl=lambda raw_url: (_ for _ in ()).throw(ValueError("crawl failed")))
+
+    with pytest.raises(RuntimeError, match="failed to fetch https://example.com/fail: crawl failed"):
+        fetcher.fetch("https://example.com/fail")

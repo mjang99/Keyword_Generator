@@ -76,7 +76,7 @@ def test_weak_tier_cap_20pct() -> None:
         evidence_pack={"canonical_product_name": "Example Product", "product_name": "Example Product", "facts": []},
     )
     assert report.status == "FAILED_GENERATION"
-    assert report.failure_code == "generation_category_shortfall" or report.failure_code == "generation_rule_violation"
+    assert report.failure_code == "generation_rule_violation"
 
 
 def test_quality_warning_set_correctly(

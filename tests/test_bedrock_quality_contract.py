@@ -3,7 +3,7 @@ from __future__ import annotations
 from src.exporting.models import UrlExportResult
 from src.exporting.service import build_per_url_json_payload
 from src.keyword_generation.bedrock_adapter import parse_dedup_quality_response
-from src.keyword_generation.constants import NEGATIVE_CATEGORY
+from src.keyword_generation.constants import INITIAL_GENERATION_TARGET, NEGATIVE_CATEGORY
 from src.keyword_generation.models import (
     CanonicalIntent,
     GenerationRequest,
@@ -51,6 +51,12 @@ def _request() -> GenerationRequest:
         },
         requested_platform_mode="both",
     )
+
+
+def test_generation_request_uses_shared_initial_generation_target() -> None:
+    request = _request()
+
+    assert request.initial_generation_target == INITIAL_GENERATION_TARGET == 160
 
 
 def test_parse_dedup_quality_response_uses_intent_id_over_surface_text() -> None:

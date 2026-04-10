@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .constants import INITIAL_GENERATION_TARGET
+
 PlatformMode = Literal["naver_sa", "google_sa", "both"]
 TerminalGenerationStatus = Literal["COMPLETED", "FAILED_GENERATION"]
 
@@ -19,6 +21,10 @@ class KeywordRow:
     reason: str = ""
     quality_warning: bool = False
     evidence_tier: str | None = None
+    quality_score: str | None = None
+    quality_reason: str | None = None
+    selection_score: float | None = None
+    soft_penalties: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -40,6 +46,10 @@ class CanonicalIntent:
     reason: str
     slot_type: str = ""
     evidence_tier: str | None = None
+    quality_score: str | None = None
+    quality_reason: str | None = None
+    selection_score: float | None = None
+    soft_penalties: tuple[str, ...] = ()
     intent_text: str = ""
     intent_id: str = ""
     allowed_platforms: list[PlatformMode] = field(default_factory=list)
@@ -54,7 +64,7 @@ class GenerationRequest:
     requested_platform_mode: PlatformMode
     max_keywords_per_platform: int = 100
     # initial_generation_target: over-generate to absorb semantic dedup loss
-    initial_generation_target: int = 130
+    initial_generation_target: int = INITIAL_GENERATION_TARGET
     supplementation_pass_limit: int = 2
 
     @property
@@ -99,6 +109,7 @@ class ValidationReport:
     requested_platform_mode: PlatformMode
     positive_keyword_counts: dict[str, int] = field(default_factory=dict)
     category_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    missing_positive_categories: dict[str, list[str]] = field(default_factory=dict)
     weak_tier_ratio_by_platform: dict[str, float] = field(default_factory=dict)
     failure_code: str | None = None
     failure_detail: str | None = None

@@ -4,6 +4,7 @@ from src.keyword_generation.models import KeywordRow
 from src.keyword_generation.policy import (
     filter_keyword_rows,
     generic_category_terms,
+    is_valid_competitor_keyword,
     keyword_policy_issues,
     taxonomy_terms,
 )
@@ -54,6 +55,96 @@ def _skincare_pack() -> dict[str, object]:
                 "value": "\ubbfc\uac10",
                 "normalized_value": "\ubbfc\uac10",
                 "admissibility_tags": ["problem_solution"],
+            },
+        ],
+    }
+
+
+def _smartphone_pack() -> dict[str, object]:
+    return {
+        "page_class": "commerce_pdp",
+        "raw_url": "https://www.apple.com/kr/shop/buy-iphone/iphone-16",
+        "product_name": "iPhone 16",
+        "canonical_product_name": "iPhone 16",
+        "sellability_state": "sellable",
+        "facts": [
+            {
+                "type": "product_name",
+                "value": "iPhone 16",
+                "normalized_value": "iPhone 16",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "brand",
+                "value": "Apple",
+                "normalized_value": "Apple",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_category",
+                "value": "smartphone",
+                "normalized_value": "smartphone",
+                "admissibility_tags": ["category"],
+            },
+        ],
+    }
+
+
+def _phone_case_pack() -> dict[str, object]:
+    return {
+        "page_class": "commerce_pdp",
+        "raw_url": "https://www.samsung.com/sec/mobile-accessories/silicone-case-for-galaxy-s-25-series/EF-PS931CREGKR/",
+        "product_name": "Galaxy S25 Silicone Case",
+        "canonical_product_name": "Galaxy S25 Silicone Case",
+        "sellability_state": "sellable",
+        "facts": [
+            {
+                "type": "product_name",
+                "value": "Galaxy S25 Silicone Case",
+                "normalized_value": "Galaxy S25 Silicone Case",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "brand",
+                "value": "Samsung",
+                "normalized_value": "Samsung",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_category",
+                "value": "케이스",
+                "normalized_value": "케이스",
+                "admissibility_tags": ["category"],
+            },
+        ],
+    }
+
+
+def _protein_food_pack() -> dict[str, object]:
+    return {
+        "page_class": "commerce_pdp",
+        "raw_url": "https://www.rankingdak.com/product/view?productCd=F000008814",
+        "product_name": "맛있닭 소스 닭가슴살",
+        "canonical_product_name": "맛있닭 소스 닭가슴살",
+        "sellability_state": "sellable",
+        "facts": [
+            {
+                "type": "product_name",
+                "value": "맛있닭 소스 닭가슴살",
+                "normalized_value": "맛있닭 소스 닭가슴살",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "brand",
+                "value": "맛있닭",
+                "normalized_value": "맛있닭",
+                "admissibility_tags": ["product_identity"],
+            },
+            {
+                "type": "product_category",
+                "value": "닭가슴살",
+                "normalized_value": "닭가슴살",
+                "admissibility_tags": ["category"],
             },
         ],
     }
@@ -257,6 +348,26 @@ def test_keyword_policy_flags_placeholder_product_term_and_skincare_domain_misma
 
     assert "placeholder_product_term" in keyword_policy_issues(placeholder, evidence_pack=_skincare_pack())
     assert "domain_mismatch_phrase" in keyword_policy_issues(domain_mismatch, evidence_pack=_skincare_pack())
+
+
+def test_competitor_policy_allows_grounded_smartphone_comparison_shape() -> None:
+    assert is_valid_competitor_keyword("아이폰16 갤럭시 비교", evidence_pack=_smartphone_pack()) is True
+
+
+def test_competitor_policy_allows_grounded_smartphone_brand_plus_identity_shape() -> None:
+    assert is_valid_competitor_keyword("갤럭시 아이폰16", evidence_pack=_smartphone_pack()) is True
+
+
+def test_competitor_policy_allows_grounded_case_brand_plus_type_shape() -> None:
+    assert is_valid_competitor_keyword("스피젠 갤럭시 S25 케이스", evidence_pack=_phone_case_pack()) is True
+
+
+def test_competitor_policy_allows_grounded_food_comparison_shape() -> None:
+    assert is_valid_competitor_keyword("하림 소스 닭가슴살 vs 맛있닭", evidence_pack=_protein_food_pack()) is True
+
+
+def test_competitor_policy_still_rejects_attribute_only_skincare_competitor() -> None:
+    assert is_valid_competitor_keyword("이니스프리 레티놀", evidence_pack=_skincare_pack()) is False
 
 
 def test_keyword_policy_flags_non_adjacent_repeated_phrase_pattern() -> None:
