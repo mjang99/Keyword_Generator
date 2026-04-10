@@ -50,6 +50,8 @@ GET    /jobs/{job_id}                 → job 상태 조회
 GET    /jobs/{job_id}/results/{file}  → 결과 파일 다운로드 (presigned URL)
 ```
 
+`GET /jobs/{job_id}`의 terminal URL task 항목은 `failure_code`, `failure_detail` 외에 운영자용 추정 원인 목록인 `failure_reason_hints[]`, 그리고 수집 fallback 가시성 필드인 `fallback_used`, `fallback_reason`, `preprocessing_source`를 포함할 수 있다.
+
 ### 요청 예시
 
 ```json
@@ -102,6 +104,12 @@ AWS Cognito JWT. `Authorization: Bearer <token>` 헤더 필수.
 | 인증 | AWS Cognito + Naver/Google OAuth |
 
 ---
+
+수집 라우팅 기본값:
+
+- 기본 수집기: `HttpPageFetcher`
+- 선택적 fallback 수집기: `Crawl4AI`
+- fallback 전처리 우선순위: `cleaned_html` -> 비어 있거나 너무 약하면 rendered `raw_html`
 
 ## 저장소 구조
 

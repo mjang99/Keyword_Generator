@@ -3,9 +3,11 @@ from __future__ import annotations
 import html
 import json
 import re
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError
 from urllib.error import URLError
@@ -165,6 +167,114 @@ class HttpPageFetcher:
         raise RuntimeError(f"failed to fetch {raw_url}: {detail}") from last_error
 
 
+class Crawl4AiPageFetcher:
+    def __init__(
+        self,
+        *,
+        run_crawl: Callable[[str], dict[str, Any]] | None = None,
+        markdown_generator: Any | None = None,
+        page_timeout_ms: int = 60_000,
+        wait_until: str = "domcontentloaded",
+        delay_before_return_html: float = 0.1,
+        wait_for_images: bool = False,
+        simulate_user: bool = False,
+        override_navigator: bool = False,
+        magic: bool = False,
+        remove_overlay_elements: bool = False,
+        screenshot: bool = False,
+        enable_stealth: bool = False,
+        headers: dict[str, str] | None = None,
+        headless: bool = True,
+        verbose: bool = False,
+    ) -> None:
+        self.run_crawl = run_crawl
+        self.markdown_generator = markdown_generator
+        self.page_timeout_ms = page_timeout_ms
+        self.wait_until = wait_until
+        self.delay_before_return_html = delay_before_return_html
+        self.wait_for_images = wait_for_images
+        self.simulate_user = simulate_user
+        self.override_navigator = override_navigator
+        self.magic = magic
+        self.remove_overlay_elements = remove_overlay_elements
+        self.screenshot = screenshot
+        self.enable_stealth = enable_stealth
+        self.headers = headers or {}
+        self.headless = headless
+        self.verbose = verbose
+        self.last_sidecars: dict[str, Any] | None = None
+
+    def fetch(self, raw_url: str) -> HtmlFetchResult:
+        try:
+            payload = self._crawl_payload(raw_url)
+        except Exception as error:
+            raise RuntimeError(f"failed to fetch {raw_url}: {error}") from error
+
+        html_text = str(payload.get("html") or "").strip()
+        if not html_text:
+            raise RuntimeError(f"failed to fetch {raw_url}: Crawl4AI returned empty html")
+
+        response_headers = _headers_to_dict(payload.get("response_headers"))
+        content_type = str(payload.get("content_type") or response_headers.get("Content-Type") or "text/html")
+        charset_selected = _optional_str(payload.get("charset_selected")) or _extract_charset_from_content_type(content_type)
+        charset_confidence = payload.get("charset_confidence")
+        if charset_selected and charset_confidence is None:
+            charset_confidence = 1.0
+
+        self.last_sidecars = dict(payload.get("sidecars") or {})
+
+        return HtmlFetchResult(
+            raw_url=raw_url,
+            final_url=str(payload.get("final_url") or raw_url),
+            html=html_text,
+            content_type=content_type,
+            http_status=int(payload.get("http_status") or 200),
+            fetch_profile_used="crawl4ai_render",
+            response_headers=response_headers or None,
+            charset_selected=charset_selected,
+            charset_confidence=charset_confidence,
+            mojibake_flags=list(payload.get("mojibake_flags") or []),
+        )
+
+    def _crawl_payload(self, raw_url: str) -> dict[str, Any]:
+        if self.run_crawl is not None:
+            return self.run_crawl(raw_url)
+        return asyncio.run(self._crawl_payload_async(raw_url))
+
+    async def _crawl_payload_async(self, raw_url: str) -> dict[str, Any]:
+        from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+
+        browser_config = BrowserConfig(
+            browser_type="chromium",
+            headless=self.headless,
+            enable_stealth=self.enable_stealth,
+            headers=self.headers or None,
+            viewport_width=1280,
+            viewport_height=720,
+            ignore_https_errors=True,
+            verbose=self.verbose,
+        )
+        run_config = CrawlerRunConfig(
+            markdown_generator=self.markdown_generator,
+            wait_until=self.wait_until,
+            page_timeout=self.page_timeout_ms,
+            delay_before_return_html=self.delay_before_return_html,
+            wait_for_images=self.wait_for_images,
+            simulate_user=self.simulate_user,
+            override_navigator=self.override_navigator,
+            magic=self.magic,
+            remove_overlay_elements=self.remove_overlay_elements,
+            screenshot=self.screenshot,
+            verbose=self.verbose,
+        )
+        async with AsyncWebCrawler(
+            config=browser_config,
+            base_directory=str(Path.cwd()),
+        ) as crawler:
+            result = await crawler.arun(url=raw_url, config=run_config)
+        return _crawl4ai_result_to_payload(result)
+
+
 class FixtureHtmlFetcher:
     def __init__(self, *, base_dir: str | Path, url_to_file: dict[str, str]) -> None:
         self.base_dir = Path(base_dir)
@@ -225,6 +335,8 @@ def build_snapshot_from_fixture(payload: dict[str, Any]) -> NormalizedPageSnapsh
         sufficiency_state=_optional_str(payload.get("sufficiency_state")),
         quality_warning=bool(payload.get("quality_warning", False)),
         fallback_used=bool(payload.get("fallback_used", False)),
+        fallback_reason=_optional_str(payload.get("fallback_reason")),
+        preprocessing_source=_optional_str(payload.get("preprocessing_source")),
         weak_backfill_used=bool(payload.get("weak_backfill_used", False)),
         facts=list(payload.get("facts", [])),
         ocr_text_blocks=list(payload.get("ocr_text_blocks", [])),
@@ -350,10 +462,121 @@ def collect_snapshot_from_html(fetch_result: HtmlFetchResult) -> NormalizedPageS
         sufficiency_state="sufficient" if usable_text_chars >= 400 else "borderline",
         quality_warning=quality_warning,
         fallback_used=False,
+        fallback_reason=None,
+        preprocessing_source="raw_html",
         weak_backfill_used=False,
         facts=[],
         ocr_text_blocks=[],
         ocr_image_results=[],
+    )
+
+
+def collect_snapshot_from_preprocessed_html(
+    fetch_result: HtmlFetchResult,
+    *,
+    sidecars: dict[str, Any] | None,
+    preferred_source: str = "cleaned_html",
+    fallback_reason: str | None = None,
+    fallback_used: bool = True,
+) -> NormalizedPageSnapshot:
+    baseline_snapshot = collect_snapshot_from_html(fetch_result)
+    decoded_text, preprocessing_source = _resolve_preprocessed_text(
+        fetch_result=fetch_result,
+        baseline_snapshot=baseline_snapshot,
+        preferred_source=preferred_source,
+        sidecars=sidecars,
+    )
+    visible_text_blocks = _meaningful_visible_blocks_v2(decoded_text)
+    lowered = " ".join(
+        part for part in (baseline_snapshot.title or "", baseline_snapshot.meta_description or "", decoded_text) if part
+    ).lower()
+
+    price_signals = _find_matches(lowered, PRICE_PATTERNS, regex=True)
+    buy_signals = _find_matches(lowered, BUY_PATTERNS)
+    stock_signals = _find_matches(lowered, STOCK_PATTERNS)
+    promo_signals = _find_matches(lowered, PROMO_PATTERNS)
+    support_signals = _find_matches(lowered, SUPPORT_PATTERNS)
+    download_signals = _find_matches(lowered, DOWNLOAD_PATTERNS)
+    blocker_signals = _dedupe_strings(
+        [
+            *_find_matches(lowered, BLOCKER_PATTERNS),
+            *_find_matches(fetch_result.html.lower(), BLOCKER_HTML_PATTERNS),
+        ]
+    )
+    waiting_signals = _find_matches(lowered, WAITING_PATTERNS)
+    primary_product_tokens = _product_tokens(
+        baseline_snapshot.title,
+        baseline_snapshot.meta_description,
+        baseline_snapshot.product_name,
+    )
+    usable_text_chars = len(decoded_text)
+    support_density = _density(len(support_signals), usable_text_chars)
+    download_density = _density(len(download_signals), usable_text_chars)
+    promo_density = _density(len(promo_signals), usable_text_chars)
+    single_product_confidence = _single_product_confidence(
+        title=baseline_snapshot.title,
+        product_name=baseline_snapshot.product_name,
+        decoded_text=decoded_text,
+        final_url=fetch_result.final_url,
+        price_signals=price_signals,
+        buy_signals=buy_signals,
+        primary_product_tokens=primary_product_tokens,
+        has_structured_product=bool(baseline_snapshot.structured_data),
+    )
+    sellability_confidence = _sellability_confidence(price_signals, buy_signals, stock_signals)
+    page_class_hint = _classify_html(
+        title=baseline_snapshot.title,
+        lowered=lowered,
+        fetch_result=fetch_result,
+        support_signals=support_signals,
+        download_signals=download_signals,
+        promo_signals=promo_signals,
+        blocker_signals=blocker_signals,
+        waiting_signals=waiting_signals,
+        price_signals=price_signals,
+        buy_signals=buy_signals,
+        single_product_confidence=single_product_confidence,
+        has_structured_product=bool(baseline_snapshot.structured_data),
+        usable_text_chars=usable_text_chars,
+    )
+    quality_warning = page_class_hint in {"support_spec_page", "document_download_heavy_support_page", "image_heavy_commerce_pdp"}
+    ocr_trigger_reasons = ["image_heavy_page"] if page_class_hint == "image_heavy_commerce_pdp" else []
+    sellability_state = "sellable" if price_signals or buy_signals else "non_sellable"
+    stock_state = "Unknown"
+    if any("out of stock" in signal or "?덉젅" in signal for signal in stock_signals):
+        stock_state = "OutOfStock"
+    elif stock_signals:
+        stock_state = "InStock"
+
+    return replace(
+        baseline_snapshot,
+        page_class_hint=page_class_hint,
+        language_scores=_language_scores(baseline_snapshot.locale_detected, decoded_text),
+        decoded_text=decoded_text,
+        visible_text_blocks=visible_text_blocks,
+        primary_product_tokens=primary_product_tokens,
+        price_signals=price_signals,
+        buy_signals=buy_signals,
+        stock_signals=stock_signals,
+        promo_signals=promo_signals,
+        support_signals=support_signals,
+        download_signals=download_signals,
+        blocker_signals=blocker_signals,
+        waiting_signals=waiting_signals,
+        ocr_trigger_reasons=ocr_trigger_reasons,
+        single_product_confidence=single_product_confidence,
+        sellability_confidence=sellability_confidence,
+        support_density=support_density,
+        download_density=download_density,
+        promo_density=promo_density,
+        usable_text_chars=usable_text_chars,
+        sellability_state=sellability_state,
+        stock_state=stock_state,
+        sufficiency_state="sufficient" if usable_text_chars >= 400 else "borderline",
+        quality_warning=quality_warning,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        preprocessing_source=preprocessing_source,
     )
 
 
@@ -522,6 +745,70 @@ def _headers_to_dict(headers: Any) -> dict[str, str]:
     if hasattr(headers, "items"):
         return {str(key): str(value) for key, value in headers.items()}
     return {}
+
+
+def _crawl4ai_result_to_payload(result: Any) -> dict[str, Any]:
+    markdown = getattr(result, "markdown", None)
+    cleaned_html = _optional_str(getattr(result, "cleaned_html", None))
+    html_text = _optional_str(getattr(result, "html", None)) or cleaned_html or ""
+    response_headers = _headers_to_dict(
+        getattr(result, "response_headers", None) or getattr(result, "headers", None)
+    )
+    content_type = response_headers.get("Content-Type") or "text/html"
+    return {
+        "final_url": _optional_str(getattr(result, "url", None)),
+        "html": html_text,
+        "content_type": content_type,
+        "http_status": getattr(result, "status_code", None) or 200,
+        "response_headers": response_headers,
+        "charset_selected": _extract_charset_from_content_type(content_type),
+        "charset_confidence": 1.0 if _extract_charset_from_content_type(content_type) else None,
+        "mojibake_flags": [],
+        "sidecars": {
+            "cleaned_html": cleaned_html,
+            "markdown": _crawl4ai_markdown_field(markdown, "raw_markdown"),
+            "fit_markdown": _crawl4ai_markdown_field(markdown, "fit_markdown"),
+            "fit_html": _crawl4ai_markdown_field(markdown, "fit_html"),
+            "screenshot_present": bool(getattr(result, "screenshot", None)),
+            "media_summary": _crawl4ai_media_summary(getattr(result, "media", None)),
+        },
+    }
+
+
+def _crawl4ai_markdown_field(markdown: Any, attribute: str) -> str | None:
+    if markdown is None:
+        return None
+    value = getattr(markdown, attribute, None)
+    if value is None and attribute == "raw_markdown":
+        value = getattr(markdown, "markdown", None)
+    return _optional_str(value)
+
+
+def _crawl4ai_media_summary(media: Any) -> dict[str, int]:
+    if not isinstance(media, dict):
+        return {"images": 0, "videos": 0, "audios": 0}
+    return {
+        "images": len(media.get("images", []) or []),
+        "videos": len(media.get("videos", []) or []),
+        "audios": len(media.get("audios", []) or []),
+    }
+
+
+def _resolve_preprocessed_text(
+    *,
+    fetch_result: HtmlFetchResult,
+    baseline_snapshot: NormalizedPageSnapshot,
+    preferred_source: str,
+    sidecars: dict[str, Any] | None,
+) -> tuple[str, str]:
+    preferred = preferred_source.strip().lower() if preferred_source else "cleaned_html"
+    payload = sidecars or {}
+    if preferred == "cleaned_html":
+        cleaned_html = str(payload.get("cleaned_html") or "").strip()
+        cleaned_text = _extract_visible_text(cleaned_html) if cleaned_html else ""
+        if len(cleaned_text) >= 60:
+            return cleaned_text, "cleaned_html"
+    return (baseline_snapshot.decoded_text or _extract_visible_text(fetch_result.html), "raw_html")
 
 
 def _decode_html_bytes(body: bytes, content_type: str) -> tuple[str, str | None, float | None, list[str]]:

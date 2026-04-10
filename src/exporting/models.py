@@ -31,6 +31,9 @@ class UrlExportResult:
     requested_platform_mode: str
     generation_result: GenerationResult
     cache_hit: bool = False
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    preprocessing_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -41,4 +44,8 @@ class UrlFailureResult:
     requested_platform_mode: str
     failure_code: str
     failure_detail: str
+    failure_reason_hints: list[str] = field(default_factory=list)
     quality_warning: bool | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    preprocessing_source: str | None = None

@@ -51,6 +51,8 @@ class NormalizedPageSnapshot:
     sufficiency_state: str | None = None
     quality_warning: bool = False
     fallback_used: bool = False
+    fallback_reason: str | None = None
+    preprocessing_source: str | None = None
     weak_backfill_used: bool = False
     facts: list[dict[str, Any]] = field(default_factory=list)
     ocr_text_blocks: list[dict[str, Any]] = field(default_factory=list)

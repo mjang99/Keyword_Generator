@@ -29,6 +29,9 @@ def build_per_url_json_payload(result: UrlExportResult) -> dict[str, Any]:
         "requested_platform_mode": result.requested_platform_mode,
         "status": result.generation_result.status,
         "cache_hit": result.cache_hit,
+        "fallback_used": result.fallback_used,
+        "fallback_reason": result.fallback_reason,
+        "preprocessing_source": result.preprocessing_source,
         "rows": [fixed_schema_row(row) for row in result.generation_result.rows],
         "debug": result.generation_result.debug_payload,
         "validation_report": {

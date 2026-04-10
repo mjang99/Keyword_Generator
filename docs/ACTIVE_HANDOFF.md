@@ -18,6 +18,96 @@ Keep the current goal, locked decisions, and immediate next work visible between
 
 ## Current Status
 
+  - 2026-04-10 generic-category survivor preservation now keeps a grounded broad market head when a more specific sibling survives:
+  - `src/keyword_generation/service.py` now restores up to two generated `generic_category` bare heads after policy/surface cleanup when the exact broad head was generated, a more specific sibling keyword still survives, and the restored head re-passes hard/policy/surface admission
+  - intent is to avoid needless shortfall on cases like `닭가슴살` being collapsed behind `소스 닭가슴살`; the rule is narrow and does not invent new heads or bypass existing hard/surface checks
+  - focused regression coverage now lives in `tests/test_generation_quality.py`
+
+  - 2026-04-10 collector fallback and failure diagnostics were tightened:
+  - `HttpPageFetcher` remains the default collection path, and Crawl4AI stays a targeted fallback for JS-heavy, interaction-heavy, or fetch-failed URLs rather than the main collector
+  - the runtime fallback is now implemented in `src/runtime/pipeline.py`: baseline HTML collection runs first, unsupported or thin-evidence pages can retry through `fallback_fetcher`, and the Crawl4AI path prefers `cleaned_html` with automatic fallback to rendered `raw_html` when the cleaned sidecar is empty or too thin
+  - `KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED=1` is the on-switch for env-built runtimes; optional tuning flags are `KEYWORD_GENERATOR_CRAWL4AI_WAIT_FOR_IMAGES`, `KEYWORD_GENERATOR_CRAWL4AI_SIMULATE_USER`, `KEYWORD_GENERATOR_CRAWL4AI_REMOVE_OVERLAYS`, `KEYWORD_GENERATOR_CRAWL4AI_MAGIC`, and `KEYWORD_GENERATOR_CRAWL4AI_ENABLE_STEALTH`
+  - live generation comparison on the Rankingdak PDP showed `http_baseline` still beats both `crawl4ai_raw_html` and `crawl4ai_cleaned_html` on final positive-row count, so `cleaned_html` is not a default-generation input candidate yet
+  - `src/runtime/pipeline.py` now returns `failure_reason_hints[]` on collection terminal failures, including fetch timeout/blocker hints, unsupported-page identity hints, and OCR runtime hints
+  - `src/runtime/service.py` now persists `failure_reason_hints[]` plus `fallback_used`, `fallback_reason`, and `preprocessing_source` into status/result artifacts so operators can see whether Crawl4AI fallback ran and which preprocessing source actually won
+  - focused regression coverage now lives in `tests/test_collection_pipeline.py`, `tests/test_runtime_e2e.py`, and `tests/test_export_aggregation.py`
+
+  - 2026-04-10 deployment seam clarified for OCR:
+  - the service-design target architecture still expects a separate `OCR Worker Lambda`, but the current deployable Terraform baseline does not create one yet
+  - if deployed today, OCR runs inside `collection-worker` through `HtmlCollectionPipeline` + `create_subprocess_ocr_runner_from_env()`, not through a standalone OCR queue consumer
+  - production deploys that enable OCR therefore must size the deployed `collection-worker` for PaddleOCR subprocess runtime, memory, and timeout needs
+  - `KEYWORD_GENERATOR_OCR_ENABLED`, `KEYWORD_GENERATOR_OCR_PYTHON`, and `KEYWORD_GENERATOR_OCR_SITE_PACKAGES` are required to activate OCR in the current baseline; `KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED` should stay disabled outside local/dev experiments
+
+  - 2026-04-10 Crawl4AI quality-tuning benchmark exposed a Windows OCR subprocess decode bug:
+  - `src/ocr/runner.py` no longer relies on PowerShell/Windows default `cp949` decoding for OCR subprocess stdout and stderr
+  - OCR subprocess execution now captures raw bytes, forces `PYTHONIOENCODING=utf-8`, decodes with UTF-8 first plus safe fallback handling, and converts image-level timeout failures into structured error payloads instead of aborting the full benchmark
+  - focused regression coverage added in `tests/test_ocr_runner.py` so future quality-tuning or live OCR sweeps cannot silently fail when PaddleOCR emits UTF-8 JSON payloads
+  - immediate next step after this fix is to rerun the full Crawl4AI quality-tuning matrix for `TASK-031` through `TASK-035`
+
+  - 2026-04-10 trusted-OCR implementation slice landed:
+  - `src/ocr/runner.py` now supports candidate-type-aware multi-pass OCR with optional vertical tiling for long detail banners, structured-table preference for table-like assets, pass metadata capture, and an early-stop cutoff once a strong pass is found
+  - `src/ocr/service.py` now classifies OCR candidates into `general_detail_image`, `front_label_closeup`, `long_detail_banner`, and `table_like_image`, persists `selection_reason_codes`, estimates text density, computes per-block `same_product_score` / `text_quality_score` / `layout_trust_score`, and emits `line_groups` plus `direct_fact_candidates`
+  - `src/evidence/service.py` now prefers trusted OCR direct candidates (`ocr_direct:*`) over raw OCR block fan-in when such candidates exist, and exposes `ocr_line_groups` / `ocr_direct_fact_candidates` on the evidence pack
+  - `scripts/evaluate_ocr_benchmark.py` now reports `direct_fact_candidate_count`, `mean_same_product_score`, and benchmark `failure_tags`
+  - `scripts/evaluate_ocr_benchmark.py` now excludes locally generated preprocessing derivatives like `*_enhance_contrast` and `*_upscale_x2` when discovering public dataset images, so benchmark roots cannot accidentally score our own debug images as source rows
+  - OCR same-product scoring now treats explicit same-page product field labels such as `제품명`, `품질표시사항`, `재질`, `제조국`, `가격`, and ingredient/material labels as deterministic same-product signals, so Korean label/spec lines can become trusted direct OCR candidates even when the block does not repeat the page title tokens verbatim
+  - line-group promotion now recomputes text quality from the merged line-group text instead of inheriting only the strongest child block score, allowing grouped Korean label/spec field clusters to become trusted direct OCR candidates when the combined text is sufficiently informative
+  - benchmark product snapshots now use the real image dimensions and mark the image candidate as a detail asset instead of always hardcoding `1200x1200`
+  - focused regression coverage added in `tests/test_ocr_runner.py` and expanded in `tests/test_ocr_policy.py` / `tests/test_evidence_builder.py`
+  - local runner smoke on `Korean_Product_Labels_Image_Dataset` sample `Kgen_Korean Product Labels_1005_10.JPEG` completed successfully with `raw_block_count=20`, `runtime_ms=96823`, and the first OCR pass (`original`) was enough to stop further passes
+  - updated Korean packaging smoke after the explicit-field and line-group promotion: `3` images at `--dataset-max-side 1600` now yield `images_with_direct_fact_candidates=3`, `mean_direct_fact_candidates=2.0`, `mean_same_product_score=0.1733`, and no rows report `no_trusted_direct_candidate`
+
+  - 2026-04-10 public OCR benchmark downloads and measurement advanced:
+  - `.gitignore` now explicitly ignores `.tmp/public_datasets/`
+  - `scripts/evaluate_ocr_benchmark.py` now supports Unitail-OCR `gallery/ocr_gt.json` manifests by grouping per-word annotations under `image_id` into a per-image reference transcription before CER/WER/word-F1 scoring
+  - focused regression coverage now locks the manifest path in `tests/test_ocr_benchmark_public_datasets.py`
+  - downloaded public dataset state under `.tmp/public_datasets/`:
+    - `Korean_Product_Labels_Image_Dataset` is cloned locally and benchmarked as a Korean packaging smoke set
+    - `Unitail-OCR.zip` is downloaded and the `unitail-ocr/gallery/` subset is extracted locally for benchmark runs
+    - `finegrainocr_repo` is cloned locally and its official `samples/` subset is benchmarkable now
+    - `FineGrainOCR.zip` download remains a blocker for full-dataset runs: the Dropbox archive is very large and the current local zip should be treated as incomplete/unvalidated until re-downloaded and integrity-checked
+  - current public benchmark readings with `--dataset-max-side 1600`:
+    - `FineGrainOCR` repo sample subset (`5` images): `mean_cer=0.6870`, `mean_wer=0.8615`, `mean_word_f1=0.2082`, `elapsed_seconds=309.43`
+    - `Unitail-OCR` gallery (`5` images): `mean_cer=1.0027`, `mean_wer=1.6714`, `mean_word_f1=0.3771`, `elapsed_seconds=13.50`
+    - `Korean_Product_Labels_Image_Dataset` (`5` images): `images_with_raw_text=5`, `images_with_admitted_text=5`, `images_with_direct_fact_candidates=5`, `mean_raw_blocks=25.0`, `mean_raw_chars=330.0`, `mean_admitted_blocks=9.0`, `mean_direct_fact_candidates=1.8`, `mean_rejected_blocks=16.0`, `elapsed_seconds=541.66`
+  - operating tip: for product/public OCR iteration on Windows, keep `--product-max-side 1600` or `--dataset-max-side 1600` for faster loops, then rerun at original size only for final report rows that need full-resolution confirmation
+
+  - 2026-04-10 OCR benchmark public-dataset support added for product-image evaluation:
+  - `scripts/evaluate_ocr_benchmark.py` now accepts `--finegrainocr-root`, `--unitail-ocr-root`, and `--korean-product-labels-root`
+  - FineGrainOCR support expects same-stem Google Vision JSON and reports CER/WER/word-F1 against the dataset-provided OCR reference
+  - Unitail-OCR support now covers both same-stem `.txt` / `.json` labels and the gallery-level `ocr_gt.json` manifest, reporting CER/WER/word-F1 against the discovered per-image transcription reference
+  - Korean packaging support benchmarks flat image-only sets as product-image smoke cases, and `--dataset-max-side` applies the explicit resize tradeoff to public datasets
+  - focused adapter discovery coverage now lives in `tests/test_ocr_benchmark_public_datasets.py`
+  - local public dataset acquisition status:
+    - `Korean_Product_Labels_Image_Dataset` cloned locally under `.tmp/public_datasets/Korean_Product_Labels_Image_Dataset`
+    - first smoke run on 3 Korean packaging images with `--dataset-max-side 1600` returned `images_with_raw_text=3`, `images_with_admitted_text=3`, `mean_raw_blocks=34.0`, `mean_raw_chars=418.33`, `mean_admitted_blocks=8.33`, `mean_rejected_blocks=25.67`, `elapsed_seconds=218.64`
+    - `finegrainocr_repo/samples` and extracted `Unitail-OCR/unitail-ocr/gallery` are now available locally and emitting benchmark rows; only the full FineGrainOCR Dropbox archive remains unresolved
+
+  - 2026-04-10 Bedrock over-generation target widened for sparse live PDPs:
+  - `src/keyword_generation/constants.py` now raises `INITIAL_GENERATION_TARGET` from `130` to `160` so Step A starts from a broader candidate pool before semantic dedup, quality scoring, and hard-rule cleanup
+  - `src/keyword_generation/models.py` now imports the shared constant instead of duplicating the default on `GenerationRequest`, so future tuning cannot drift between runtime and request defaults
+  - focused regression coverage now locks the shared default in `tests/test_bedrock_quality_contract.py`
+  - immediate next check is retention on sparse live PDPs after dedup/cleanup, not floor loosening
+
+  - 2026-04-10 selection policy changed from binary category gating to score-based top-100:
+  - `src/keyword_generation/service.py` now keeps hard bans as immediate removals but scores softer issues (`low_information`, ungrounded season/problem/feature shapes, weak evidence, duplicate family crowding) and selects positives via `reserve best per category -> global top fill`
+  - `src/keyword_generation/policy.py` now splits hard vs soft policy issues; `low_information` is no longer a hard drop or validator failure by itself
+  - `src/keyword_generation/validation.py` no longer fails on missing positive categories; missing-category state is now diagnostic under `missing_positive_categories`, while hard failures remain count shortfall, missing negatives, invalid match labels, banned promo/urgency, and hard policy violations
+  - generation debug artifacts now include `debug.generation.selection` with scored candidates, selected rows, ranking losses, cutline score, and per-category selected/dropped counts
+  - live Bedrock smoke panel expanded in `tests/test_runtime_bedrock_live.py` to 5 PDP URLs: Apple iPhone 16, Samsung S25 case, Rankingdak chicken, Laneige retinol, and Aesop barrier cream
+  - 2026-04-10 Bedrock Step A now fans out by category instead of mixed clusters:
+  - `src/keyword_generation/service.py` now runs one focused generation batch per category plus one negative batch, rather than starting from four mixed clusters and splitting only weak ones
+  - intent is to improve survivor volume for thin categories before dedup, hard-rule cleanup, and score-based top-100 selection
+  - focused regression coverage updated in `tests/test_bedrock_batching.py`
+  - 2026-04-10 weak-category prompt exemplars added for Bedrock generation/supplementation:
+  - `src/keyword_generation/bedrock_adapter.py` now injects evidence-grounded `category_examples` for `competitor_comparison`, `long_tail`, `season_event`, and `problem_solution`, with paired good/bad surfaces derived from the current product interpretation
+  - exemplars are dynamic per product: concern/use-case rows reuse current evidence, competitor examples reuse current competitor hints and canonical category, and bad examples explicitly show product-prefixed scaffolds, shipping/promo seasonality, and generic comparison shapes to avoid
+  - focused regression coverage updated in `tests/test_bedrock_adapter.py`
+  - 2026-04-10 competitor survivor policy widened for live panel categories that were under-admitted:
+  - `src/keyword_generation/policy.py` now recognizes `smartphone`, `phone_case`, and `protein_food` product types for generic-category grounding and competitor-brand seeds, so live Apple/Samsung/Rankingdak competitor rows are no longer forced through skincare/electronics-only seeds
+  - competitor validity now accepts either `competitor brand + grounded product type` or an explicit comparison surface (`vs` / `비교` / `대체` / `대안`) that still references the current product identity; same-product measurement/price comparisons remain blocked
+  - focused regression coverage added in `tests/test_keyword_policy.py` for `아이폰16 갤럭시 비교`, `스피젠 갤럭시 S25 케이스`, `하림 소스 닭가슴살 vs 맛있닭`, and the still-invalid skincare fallback `이니스프리 레티놀`
+
   - 2026-04-09 residual semantic hardcoding cleanup completed for deterministic rendering:
   - `src/keyword_generation/service.py` no longer expands observed audience phrases like `건성 복합성 피부` into split audience tokens such as `건성 피부` / `복합성 피부`; deterministic generation now keeps the observed audience phrase intact
   - `problem_solution` seed construction is now concern-only: `problem_noun_phrases` no longer absorb `audience` or `usage_context` values just to widen slot coverage
@@ -33,8 +123,8 @@ Keep the current goal, locked decisions, and immediate next work visible between
   - Terraform defaults now match the new token budget in `infra/terraform/variables.tf`, `infra/terraform/terraform.tfvars.example`, and `infra/terraform/dev.auto.tfvars`
   - focused regression coverage now locks lightweight item parsing, downstream reason filling, shared-render hydration, and count-aware supplementation in `tests/test_bedrock_adapter.py`, `tests/test_bedrock_quality_contract.py`, and `tests/test_bedrock_shared_render.py`
   - 2026-04-09 adaptive multi-batch generation is now active on top of the lightweight Step A contract:
-  - `src/keyword_generation/service.py` now runs cluster-first generation batches (`brand/generic/purchase`, `feature/price`, `long_tail/problem/season`, `competitor/negative`) instead of one monolithic Step A Bedrock call
-  - weak clusters now split into narrower follow-up batches only when batch-local category hits or volume are too low, so the runtime does not pay fixed per-category fanout cost on every URL
+  - `src/keyword_generation/service.py` initially moved to cluster-first generation batches (`brand/generic/purchase`, `feature/price`, `long_tail/problem/season`, `competitor/negative`) instead of one monolithic Step A Bedrock call; as of 2026-04-10 this has been replaced by category-first fanout for richer weak-category coverage
+  - weak-cluster split logic remains in the runtime for compatibility, but current Step A blueprints are category-scoped so live generation no longer depends on mixed-batch splits for thin categories
   - batch activation no longer depends on slot-plan presence alone; categories with a target but sparse slot seeds still receive a generation batch, which prevents weak categories from disappearing before Bedrock is called
   - metadata handling is now backward-tolerant inside the runtime: generation, dedup, and supplementation callers accept both `(result, metadata)` tuples and legacy bare return values, which keeps focused tests and partial mocks compatible while the live path records per-batch metadata
   - `src/keyword_generation/bedrock_adapter.py` response parsing now unwraps fenced JSON / nested wrapper payloads before looking for `items[]`, `intents[]`, or `rows[]`, reducing live parser failures from non-canonical Bedrock wrappers
@@ -404,7 +494,7 @@ Keep the current goal, locked decisions, and immediate next work visible between
 | Cache validity worker | Dedicated scheduled worker (daily) scans cached entries, HEAD-checks canonical URLs, deletes entries where URL is gone or content materially changed. Submit never performs live URL checks. |
 | Keyword language | Korean + English mixed allowed; brand/model names keep original form; same concept in both languages = two distinct keyword rows |
 | Page product gate | LLM must always answer "Is this a product sales page?" as mandatory first gate before class scoring; non-sales pages → `support_spec_page` or `non_product_page` immediately |
-| Post-processing strategy | LLM-driven: (A) over-generate ~130, (B) LLM semantic dedup + quality eval, (C) LLM supplementation if gaps remain. Hard compliance rules (promo/price/stock/competitor) stay deterministic. Quality is v1 priority; cost optimization deferred. |
+| Post-processing strategy | LLM-driven: (A) over-generate ~160 via category-first Bedrock fanout, (B) LLM semantic dedup + quality eval, (C) LLM supplementation if gaps remain. Hard compliance rules (promo/price/stock/competitor) stay deterministic. Quality is v1 priority; cost optimization deferred. |
 
 ## Blockers
 

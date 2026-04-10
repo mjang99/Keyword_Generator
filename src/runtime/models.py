@@ -26,6 +26,7 @@ class LocalResolvedSuccess:
 class LocalResolvedFailure:
     failure_code: str
     failure_detail: str
+    failure_reason_hints: list[str] | None = None
     page_class: str | None = None
     quality_warning: bool | None = None
     snapshot: dict[str, Any] | None = None

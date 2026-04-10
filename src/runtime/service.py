@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import boto3
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 
-from src.collection import HttpPageFetcher
+from src.collection import Crawl4AiPageFetcher, HttpPageFetcher
 from src.exporting import (
     JobArtifactUrls,
     NotificationTarget,
@@ -122,6 +122,7 @@ def create_html_collection_runtime(
     sqs_client: Any,
     resources: RuntimeResources,
     fetcher: Any | None = None,
+    fallback_fetcher: Any | None = None,
     ocr_runner: Any | None = None,
     allow_ocr_for_unsupported: bool = False,
     policy_version: str = "policy_v1",
@@ -135,6 +136,7 @@ def create_html_collection_runtime(
         resources=resources,
         resolver=HtmlCollectionPipeline(
             fetcher=fetcher or HttpPageFetcher(),
+            fallback_fetcher=fallback_fetcher,
             ocr_runner=ocr_runner,
             allow_ocr_for_unsupported=allow_ocr_for_unsupported,
         ).resolve,
@@ -147,6 +149,7 @@ def create_html_collection_runtime(
 def create_html_collection_runtime_from_env(
     *,
     fetcher: Any | None = None,
+    fallback_fetcher: Any | None = None,
     ocr_runner: Any | None = None,
     region_name: str | None = None,
 ) -> "LocalPipelineRuntime":
@@ -160,12 +163,30 @@ def create_html_collection_runtime_from_env(
         sqs_client=sqs_client,
         resources=load_runtime_resources_from_env(),
         fetcher=fetcher,
+        fallback_fetcher=fallback_fetcher or _build_crawl4ai_fallback_fetcher_from_env(),
         ocr_runner=ocr_runner or create_subprocess_ocr_runner_from_env(),
         allow_ocr_for_unsupported=os.environ.get("KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED", "").strip().lower()
         in {"1", "true", "yes", "on"},
         policy_version=os.environ.get("KEYWORD_GENERATOR_POLICY_VERSION", "policy_v1"),
         taxonomy_version=os.environ.get("KEYWORD_GENERATOR_TAXONOMY_VERSION", "tax_v2026_04_03"),
         generator_version=os.environ.get("KEYWORD_GENERATOR_GENERATOR_VERSION", "gen_v3"),
+    )
+
+
+def _build_crawl4ai_fallback_fetcher_from_env() -> Any | None:
+    enabled = os.environ.get("KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return None
+    return Crawl4AiPageFetcher(
+        wait_for_images=os.environ.get("KEYWORD_GENERATOR_CRAWL4AI_WAIT_FOR_IMAGES", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        simulate_user=os.environ.get("KEYWORD_GENERATOR_CRAWL4AI_SIMULATE_USER", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        remove_overlay_elements=os.environ.get("KEYWORD_GENERATOR_CRAWL4AI_REMOVE_OVERLAYS", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        magic=os.environ.get("KEYWORD_GENERATOR_CRAWL4AI_MAGIC", "").strip().lower() in {"1", "true", "yes", "on"},
+        enable_stealth=os.environ.get("KEYWORD_GENERATOR_CRAWL4AI_ENABLE_STEALTH", "").strip().lower()
+        in {"1", "true", "yes", "on"},
     )
 
 
@@ -292,6 +313,9 @@ class LocalPipelineRuntime:
                         "status": "COMPLETED_CACHED",
                         "page_class": cached_copy.get("page_class"),
                         "cache_hit": True,
+                        "fallback_used": bool(cached_copy.get("fallback_used")),
+                        "fallback_reason": _optional_str(cached_copy.get("fallback_reason")),
+                        "preprocessing_source": _optional_str(cached_copy.get("preprocessing_source")),
                         "result_s3_key": result_key,
                     }
                 )
@@ -406,6 +430,10 @@ class LocalPipelineRuntime:
                     "page_class": task.get("page_class"),
                     "failure_code": task.get("failure_code"),
                     "failure_detail": task.get("failure_detail"),
+                    "failure_reason_hints": task.get("failure_reason_hints", []),
+                    "fallback_used": bool(task.get("fallback_used")),
+                    "fallback_reason": task.get("fallback_reason"),
+                    "preprocessing_source": task.get("preprocessing_source"),
                     "cache_hit": bool(task.get("cache_hit")),
                 }
                 for task in url_tasks
@@ -481,7 +509,11 @@ class LocalPipelineRuntime:
                 requested_platform_mode=task["requested_platform_mode"],
                 failure_code=resolved.failure_code,
                 failure_detail=resolved.failure_detail,
+                failure_reason_hints=list(resolved.failure_reason_hints or []),
                 quality_warning=resolved.quality_warning,
+                fallback_used=bool((resolved.snapshot or {}).get("fallback_used")),
+                fallback_reason=(resolved.snapshot or {}).get("fallback_reason"),
+                preprocessing_source=(resolved.snapshot or {}).get("preprocessing_source"),
             )
             failure_key = self._job_failure_key(job_id, url_task_id)
             self._write_json(failure_key, asdict(failure))
@@ -492,7 +524,11 @@ class LocalPipelineRuntime:
                     "page_class": resolved.page_class,
                     "failure_code": resolved.failure_code,
                     "failure_detail": resolved.failure_detail,
+                    "failure_reason_hints": list(resolved.failure_reason_hints or []),
                     "quality_warning": resolved.quality_warning,
+                    "fallback_used": bool((resolved.snapshot or {}).get("fallback_used")),
+                    "fallback_reason": (resolved.snapshot or {}).get("fallback_reason"),
+                    "preprocessing_source": (resolved.snapshot or {}).get("preprocessing_source"),
                     "collection_snapshot_s3_key": self._job_snapshot_key(job_id, url_task_id)
                     if resolved.snapshot is not None
                     else None,
@@ -545,6 +581,9 @@ class LocalPipelineRuntime:
                 requested_platform_mode=generation_platform,
                 generation_result=generation_result,
                 cache_hit=False,
+                fallback_used=bool(evidence_pack.get("fallback_used")),
+                fallback_reason=_optional_str(evidence_pack.get("fallback_reason")),
+                preprocessing_source=_optional_str(evidence_pack.get("preprocessing_source")),
             )
             payload = build_per_url_json_payload(success)
 
@@ -581,6 +620,9 @@ class LocalPipelineRuntime:
                     "status": "COMPLETED",
                     "page_class": success.page_class,
                     "quality_warning": payload["validation_report"]["quality_warning"],
+                    "fallback_used": success.fallback_used,
+                    "fallback_reason": success.fallback_reason,
+                    "preprocessing_source": success.preprocessing_source,
                     "collection_snapshot_s3_key": self._job_snapshot_key(job_id, url_task_id)
                     if resolved.snapshot is not None
                     else None,
@@ -608,6 +650,9 @@ class LocalPipelineRuntime:
             failure_code=generation_result.validation_report.failure_code or "generation_failed",
             failure_detail=generation_result.validation_report.failure_detail or "generation failed",
             quality_warning=generation_result.validation_report.quality_warning,
+            fallback_used=bool(evidence_pack.get("fallback_used")),
+            fallback_reason=_optional_str(evidence_pack.get("fallback_reason")),
+            preprocessing_source=_optional_str(evidence_pack.get("preprocessing_source")),
         )
         failed_result = UrlExportResult(
             url_task_id=url_task_id,
@@ -616,6 +661,9 @@ class LocalPipelineRuntime:
             requested_platform_mode=generation_platform,
             generation_result=generation_result,
             cache_hit=False,
+            fallback_used=failure.fallback_used,
+            fallback_reason=failure.fallback_reason,
+            preprocessing_source=failure.preprocessing_source,
         )
         result_key = self._job_result_key(job_id, url_task_id)
         self._write_json(result_key, build_per_url_json_payload(failed_result))
@@ -629,6 +677,9 @@ class LocalPipelineRuntime:
                 "failure_code": failure.failure_code,
                 "failure_detail": failure.failure_detail,
                 "quality_warning": failure.quality_warning,
+                "fallback_used": failure.fallback_used,
+                "fallback_reason": failure.fallback_reason,
+                "preprocessing_source": failure.preprocessing_source,
                 "collection_snapshot_s3_key": self._job_snapshot_key(job_id, url_task_id)
                 if resolved.snapshot is not None
                 else None,
@@ -679,6 +730,9 @@ class LocalPipelineRuntime:
                         requested_platform_mode=task["requested_platform_mode"],
                         generation_result=_generation_result_from_payload(payload),
                         cache_hit=bool(payload["cache_hit"]),
+                        fallback_used=bool(payload.get("fallback_used")),
+                        fallback_reason=_optional_str(payload.get("fallback_reason")),
+                        preprocessing_source=_optional_str(payload.get("preprocessing_source")),
                     )
                 )
                 continue
@@ -735,6 +789,9 @@ class LocalPipelineRuntime:
                         requested_platform_mode=task["requested_platform_mode"],
                         generation_result=_generation_result_from_payload(payload),
                         cache_hit=bool(payload["cache_hit"]),
+                        fallback_used=bool(payload.get("fallback_used")),
+                        fallback_reason=_optional_str(payload.get("fallback_reason")),
+                        preprocessing_source=_optional_str(payload.get("preprocessing_source")),
                     )
                 )
                 continue
@@ -965,6 +1022,13 @@ class LocalPipelineRuntime:
     @staticmethod
     def _now() -> str:
         return datetime.now(tz=UTC).isoformat()
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def canonicalize_url(raw_url: str) -> str:

@@ -1,5 +1,6 @@
 from .models import NormalizedPageSnapshot, PageClassification
 from .service import (
+    Crawl4AiPageFetcher,
     DEFAULT_FETCH_PROFILES,
     FetchProfile,
     SUPPORTED_PAGE_CLASSES,
@@ -9,9 +10,11 @@ from .service import (
     build_snapshot_from_fixture,
     classify_snapshot,
     collect_snapshot_from_html,
+    collect_snapshot_from_preprocessed_html,
 )
 
 __all__ = [
+    "Crawl4AiPageFetcher",
     "DEFAULT_FETCH_PROFILES",
     "FetchProfile",
     "FixtureHtmlFetcher",
@@ -23,4 +26,5 @@ __all__ = [
     "build_snapshot_from_fixture",
     "classify_snapshot",
     "collect_snapshot_from_html",
+    "collect_snapshot_from_preprocessed_html",
 ]

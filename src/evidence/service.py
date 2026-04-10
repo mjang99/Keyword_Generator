@@ -166,13 +166,15 @@ def build_evidence_pack(
     classification: PageClassification,
     ocr_decision: OcrDecision | None = None,
 ) -> dict[str, object]:
-    admitted_ocr_blocks = list(ocr_decision.admitted_blocks) if ocr_decision else list(snapshot.ocr_text_blocks)
+    admitted_ocr_blocks = list(getattr(ocr_decision, "admitted_blocks", [])) if ocr_decision else list(snapshot.ocr_text_blocks)
+    ocr_line_groups = list(getattr(ocr_decision, "line_groups", [])) if ocr_decision else []
+    ocr_direct_fact_candidates = list(getattr(ocr_decision, "direct_fact_candidates", [])) if ocr_decision else []
     ocr_used = bool(admitted_ocr_blocks)
     direct_text_chars = len(snapshot.decoded_text or "")
     ocr_chars = sum(len(str(block.get("text", ""))) for block in admitted_ocr_blocks)
     ocr_dominant = ocr_chars > 0 and direct_text_chars > 0 and (ocr_chars / max(direct_text_chars, 1)) > 0.30
     canonical_product_name = _canonicalize_product_name(snapshot, classification.page_class)
-    facts = _assemble_facts(snapshot, classification, admitted_ocr_blocks)
+    facts = _assemble_facts(snapshot, classification, admitted_ocr_blocks, ocr_direct_fact_candidates)
     thin_pack = _is_thin_pack(facts, classification.page_class)
 
     return {
@@ -189,6 +191,8 @@ def build_evidence_pack(
         "sufficiency_state": snapshot.sufficiency_state,
         "quality_warning": snapshot.quality_warning or ocr_dominant or thin_pack,
         "fallback_used": snapshot.fallback_used,
+        "fallback_reason": snapshot.fallback_reason,
+        "preprocessing_source": snapshot.preprocessing_source,
         "weak_backfill_used": snapshot.weak_backfill_used,
         "ocr_used": ocr_used,
         "facts": facts,
@@ -196,6 +200,8 @@ def build_evidence_pack(
         "fact_group_count": len({fact["type"] for fact in facts}),
         "quality_warning_inputs": _quality_warning_inputs(snapshot, ocr_dominant, ocr_used, thin_pack),
         "ocr_text_blocks": admitted_ocr_blocks,
+        "ocr_line_groups": ocr_line_groups,
+        "ocr_direct_fact_candidates": ocr_direct_fact_candidates,
     }
 
 
@@ -203,6 +209,7 @@ def _assemble_facts(
     snapshot: NormalizedPageSnapshot,
     classification: PageClassification,
     admitted_ocr_blocks: list[dict[str, Any]],
+    ocr_direct_fact_candidates: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     normalized_existing = [_normalize_fact(fact, snapshot.raw_url, index) for index, fact in enumerate(snapshot.facts, start=1)]
     candidates = list(normalized_existing)
@@ -274,7 +281,15 @@ def _assemble_facts(
             )
         )
 
-    candidates.extend(_derive_textual_facts(snapshot, classification.page_class, admitted_ocr_blocks, structured_context))
+    candidates.extend(
+        _derive_textual_facts(
+            snapshot,
+            classification.page_class,
+            admitted_ocr_blocks,
+            ocr_direct_fact_candidates,
+            structured_context,
+        )
+    )
     candidates = _dedupe_facts(candidates)
 
     fallback_facts = _derive_bedrock_fallback_facts(snapshot, classification, candidates, structured_context)
@@ -345,6 +360,7 @@ def _derive_textual_facts(
     snapshot: NormalizedPageSnapshot,
     page_class: str,
     admitted_ocr_blocks: list[dict[str, Any]],
+    ocr_direct_fact_candidates: list[dict[str, Any]],
     structured_context: dict[str, str],
 ) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
@@ -355,10 +371,16 @@ def _derive_textual_facts(
         ("structured_data.description", structured_context.get("description", ""), "direct", 0.04),
     ]
     source_entries.extend(decoded_blocks)
-    source_entries.extend(
-        (f"ocr:{index}", str(block.get("text", "")), "direct", -0.08)
-        for index, block in enumerate(admitted_ocr_blocks, start=1)
-    )
+    if ocr_direct_fact_candidates:
+        source_entries.extend(
+            (f"ocr_direct:{index}", str(block.get("text", "")), "direct", -0.03)
+            for index, block in enumerate(ocr_direct_fact_candidates, start=1)
+        )
+    else:
+        source_entries.extend(
+            (f"ocr:{index}", str(block.get("text", "")), "direct", -0.08)
+            for index, block in enumerate(admitted_ocr_blocks, start=1)
+        )
 
     for source_name, text, tier, confidence_bias in source_entries:
         if not text:
@@ -1202,6 +1224,10 @@ def _quality_warning_inputs(
     inputs: list[str] = []
     if snapshot.fallback_used:
         inputs.append("fallback_used")
+    if snapshot.fallback_reason:
+        inputs.append(f"fallback_reason:{snapshot.fallback_reason}")
+    if snapshot.preprocessing_source:
+        inputs.append(f"preprocessing_source:{snapshot.preprocessing_source}")
     if snapshot.weak_backfill_used:
         inputs.append("weak_backfill_used")
     if snapshot.sufficiency_state == "borderline":

@@ -32,7 +32,7 @@ Core design choices:
 9. If the page class is supported, OCR policy decides whether to run screenshot OCR and ranked asset OCR. OCR output is merged into the evidence pack only after filtering.
 10. `Evidence Builder` computes product identity, sellability, stock state, sufficiency, locale, promo admissibility, and fallback eligibility.
 11. If the exact page is thin but product-specific, `Evidence Builder` may fetch same-product support/spec/doc pages from the same root domain or approved sibling domain. Promo fallback is narrower: a directly linked promo/event page is fetchable only when the link appears on the exact page and explicitly names the same product or SKU.
-12. `Intent Planner` sets generation targets: category quotas, platform targets, evidence tier ceilings, and an over-generation budget (~130-150 candidates per platform) to absorb dedup loss.
+12. `Intent Planner` sets generation targets: category quotas, platform targets, evidence tier ceilings, and an over-generation budget (~160 candidates per platform) to absorb dedup loss.
 13. `Keyword Generator` calls Bedrock once with the evidence pack and targets to produce the over-generation candidate set. It cannot invent facts outside admitted evidence and approved taxonomy entries.
 14. `Dedup & Quality Evaluator` calls Bedrock once to (a) semantically deduplicate candidates (intent-level, not string-level), (b) score each surviving keyword's quality with a justification, and (c) flag categories that are still short after dedup.
 15. If all platform floors (`>=100` positive, all 9 categories present, `>=1` negative) are met after dedup → proceed to step 15b. If any gap remains → `Keyword Supplementor` calls Bedrock once more, targeting only the missing categories or shortfall count. After supplementation, the surviving set must meet floors; if not, the URL is marked `FAILED_GENERATION`.
@@ -508,11 +508,13 @@ The following local fixtures are the acceptance source for v1 collection/classif
 | `FAILED_COLLECTION` | `insufficient_evidence` | Collection succeeded, but the supported page still failed the sufficiency policy after allowed OCR and fallback. |
 | `FAILED_GENERATION` | `generation_schema_repair_exhausted` | Bedrock output could not be repaired into the locked JSON contract. |
 | `FAILED_GENERATION` | `generation_count_shortfall` | Final output for a requested platform remained below `100` after the one allowed supplementation pass. |
-| `FAILED_GENERATION` | `generation_category_shortfall` | Final output for a requested platform missed one or more required categories after the one allowed supplementation pass. |
 | `FAILED_GENERATION` | `generation_rule_violation` | Validator rejected the output for deterministic rule violations that repair does not own. |
 
 - `failure_detail` is a short operator-readable sentence and may include stage-local context such as HTTP status, dominant blocker pattern, or missing categories.
 - `failure_detail` must not contain raw model output, secrets, or full scraped page text.
+- `failure_reason_hints` is an optional short list of operator-readable suspected causes, such as timeout, blocker/challenge, weak product identity, or OCR runtime failure.
+- `failure_reason_hints` is advisory only and does not replace the locked `failure_code`.
+- collection workers may also persist `fallback_used`, `fallback_reason`, and `preprocessing_source` so operators can see whether the Crawl4AI fallback path ran and whether `cleaned_html` or rendered `raw_html` was actually used.
 
 ### 3.2.3 Status Payload Shape
 
@@ -541,6 +543,10 @@ The following local fixtures are the acceptance source for v1 collection/classif
   - `quality_warning`
   - `failure_code`
   - `failure_detail`
+  - `failure_reason_hints`
+  - `fallback_used`
+  - `fallback_reason`
+  - `preprocessing_source`
   - `result_url`
   - `cache_hit`
 - `notification`
@@ -578,6 +584,10 @@ Example non-terminal job payload:
       "quality_warning": false,
       "failure_code": null,
       "failure_detail": null,
+      "failure_reason_hints": [],
+      "fallback_used": false,
+      "fallback_reason": null,
+      "preprocessing_source": "raw_html",
       "result_url": "/jobs/job_01JABCDEF/results/per_url_manifest",
       "cache_hit": true
     },
@@ -590,6 +600,10 @@ Example non-terminal job payload:
       "quality_warning": true,
       "failure_code": null,
       "failure_detail": null,
+      "failure_reason_hints": [],
+      "fallback_used": false,
+      "fallback_reason": null,
+      "preprocessing_source": "raw_html",
       "result_url": null,
       "cache_hit": false
     }
@@ -644,6 +658,10 @@ Example terminal partial-complete payload:
       "quality_warning": null,
       "failure_code": "promo_heavy_commerce_landing",
       "failure_detail": "single-product identity not proven after classification",
+      "failure_reason_hints": [
+        "single-product identity was not proven strongly enough from product, price, and buy-intent signals",
+        "the URL looks closer to a promo landing page or listing than a single PDP"
+      ],
       "result_url": null,
       "cache_hit": false
     }
@@ -912,6 +930,7 @@ Asset OCR ranking score should favor:
 - image position near hero/gallery/spec sections
 - alt text containing product/model/spec tokens
 - filenames or URLs containing model/spec/product tokens
+- candidate-type routing into `general_detail_image`, `front_label_closeup`, `long_detail_banner`, or `table_like_image`
 - uniqueness over obvious sprite/icon assets
 
 Reject before OCR:
@@ -927,6 +946,14 @@ Default cap:
 - one screenshot
 - up to eight ranked page images
 
+Execution policy:
+
+- `table_like_image` prefers the structured OCR branch first and may fall back to plain OCR
+- `long_detail_banner` should prefer tiled OCR over one-shot full-image OCR
+- plain-image OCR may run multiple preprocessing passes, but it must stop early once a sufficiently strong pass is found instead of always paying every pass cost
+- OCR artifacts must retain per-image pass metadata (`ocr_passes[]`, preprocessing variant, tile count, runtime, recognizer language) for later debugging
+- trusted OCR promotion should evaluate merged `line_group` text quality, not only the strongest child block score, so grouped label/spec lines can become direct candidates when the combined line-group text is informative enough
+
 OCR block admission requires all of the following:
 
 - decoded block length `>=30` characters or at least two product/spec tokens
@@ -934,6 +961,7 @@ OCR block admission requires all of the following:
 - not mostly brand-only repetition
 - not dominated by navigation, coupon, or unrelated campaign text
 - same-page or same-product match can be established from nearby context
+- exact-page label/spec field markers such as `제품명`, `품질표시사항`, `재질`, `제조국`, `가격`, `ingredient(s)`, or `material` may count as deterministic same-product signals on ranked same-page detail images even when the OCR block does not repeat the page title tokens verbatim
 
 Reject OCR blocks when any are true:
 
@@ -948,6 +976,7 @@ Admitted OCR facts:
 - may support product attributes, materials, compatibility, included items, and long-tail detail
 - may support promo only when the OCR block is same-page and explicitly tied to the exact product
 - must never become the sole basis for product identity if non-OCR signals do not already establish the same product
+- OCR should promote trusted `line_group` candidates, not raw blocks alone, when deciding whether same-page OCR can contribute `direct` evidence
 
 #### 4.1.6 `quality_warning` Inputs
 
@@ -1032,7 +1061,7 @@ Minimum `generation/intent_plan.json` shape:
 Locked planner defaults:
 
 - `positive_target_per_platform = 100` (floor after dedup)
-- `initial_generation_target = 130` (over-generate to absorb semantic dedup loss; configurable)
+- `initial_generation_target = 160` (over-generate to absorb semantic dedup loss; configurable)
 - `negative_target_range = { min: 10, max: 30 }`
 - `weak_positive_cap = 20` (applied after dedup, before supplementation)
 - `supplementation_pass_limit = 1` (one LLM supplementation call if gaps remain post-dedup)
@@ -1184,7 +1213,7 @@ Locked rendering rules:
 - renderer produces one Naver candidate set and one Google candidate set from that same pool
 - validator then evaluates Naver and Google independently for:
   - positive count
-  - positive category coverage
+  - soft category coverage diagnostics
   - negative output presence
   - match-label validity
   - rule violations
@@ -1203,15 +1232,34 @@ Validator-owned hard rejections:
 | Weak-cap overflow | surviving positive rows include more than `20` `weak` intents | yes, by dropping overflow weak rows and filling from stronger backlog if available |
 | Competitor safety | competitor token is absent from the active taxonomy bundle or does not match the observed product class | yes, only by replacement |
 
-Rows that fail these checks are dropped before category and count validation. Repair never rewrites the rejected phrase into a new unsupported claim; it can only replace it with a backlog intent that already satisfies the same evidence and taxonomy constraints.
+Rows that fail these checks are dropped before scoring and top-100 selection. Repair never rewrites the rejected phrase into a new unsupported claim; it can only replace it with a backlog intent that already satisfies the same evidence and taxonomy constraints.
+
+Soft shaping rules are score penalties, not immediate drops:
+
+- low-information scaffolds
+- weak or fallback-only evidence
+- ungrounded feature / season / problem surfaces
+- awkward product-prefix or purpose-suffix shapes
+- duplicate-family crowding inside the same category
+
+These rows may still survive if the candidate pool is sparse, but they should lose to higher-confidence rows at final selection time.
 
 #### 4.2.7 LLM Post-Processing Pipeline Summary
+
+Operator note (2026-04-10): category presence is now soft at final validation time. The runtime still over-generates and may still supplement for category/count gaps upstream, but the final post-processing flow is:
+
+1. hard remove only for must-never-ship rows
+2. assign a deterministic `selection_score` from Bedrock quality tier plus evidence/shape penalties
+3. reserve the best available positive row per category when available
+4. fill the remaining positive slots by global score until each requested platform reaches `100`
+
+Missing positive categories are recorded in diagnostics/debug output and `missing_positive_categories`; they no longer fail generation by themselves.
 
 Three Bedrock calls are used per platform in the generation stage. Each call is purposeful; no speculative extra calls.
 
 | Step | Bedrock call | Input | Output | Condition |
 | --- | --- | --- | --- | --- |
-| **A — Generation** | 1 call | evidence pack + intent plan + `initial_generation_target` | ~130 candidate keywords per platform | always |
+| **A — Generation** | 1 call | evidence pack + intent plan + `initial_generation_target` | ~160 candidate keywords per platform | always |
 | **B — Dedup & Quality** | 1 call | candidate set from A | surviving set + dedup justifications + quality scores + gap report | always |
 | **C — Supplementation** | 1 call | gap report from B + evidence pack | fill keywords for missing categories/count only | only when gap_report shows shortfall |
 
@@ -1436,7 +1484,11 @@ Combined JSON skeleton:
   - `requested_platform_mode`
   - `failure_code`
   - `failure_detail`
+  - `failure_reason_hints`
   - `quality_warning`
+  - `fallback_used`
+  - `fallback_reason`
+  - `preprocessing_source`
 
 Failure manifest example:
 
@@ -1451,7 +1503,14 @@ Failure manifest example:
       "requested_platform_mode": "both",
       "failure_code": "promo_heavy_commerce_landing",
       "failure_detail": "single-product identity not proven",
-      "quality_warning": null
+      "failure_reason_hints": [
+        "single-product identity was not proven strongly enough from product, price, and buy-intent signals",
+        "the URL looks closer to a promo landing page or listing than a single PDP"
+      ],
+      "quality_warning": null,
+      "fallback_used": true,
+      "fallback_reason": "client_side_render_suspected",
+      "preprocessing_source": "cleaned_html"
     }
   ]
 }
@@ -1573,6 +1632,12 @@ This payload is delivery-channel-neutral. SES templates and webhook senders may 
 | `SES/Webhook Sender Lambda` | zip | Notification logic is lightweight and should stay isolated from heavy runtime images. |
 
 - All workers assume `Python 3.13`, AWS Lambda AL2023, and `arm64` unless a later implementation task documents a concrete package incompatibility.
+
+Current implementation note:
+
+- The design target remains a separate `OCR Worker Lambda`, but the current deployable baseline has not split that worker out yet.
+- In the code that exists today, OCR may still execute inside the deployed `collection-worker` via the `HtmlCollectionPipeline` OCR runner seam when OCR env flags are enabled.
+- Operators must not assume that the reserved `ocr` queue means OCR is already isolated in production; memory and timeout sizing still apply to the deployed collection worker until the standalone OCR handler exists.
 - Container images may share a base image family, but collection and OCR stay as separate deployables because their dependency graphs, memory profiles, and retry semantics differ.
 
 ### 5.4 Minimal Idempotency Boundaries

@@ -56,6 +56,25 @@ def test_evidence_builder_preserves_fixture_facts(evidence_fixture_loader) -> No
     assert evidence_pack["direct_fact_count"] >= 1
 
 
+def test_evidence_builder_surfaces_fallback_reason_and_preprocessing_source() -> None:
+    snapshot = _snapshot(
+        decoded_text="상품명 23,900원 장바구니",
+        visible_text_blocks=["상품명", "23,900원", "장바구니"],
+        fallback_used=True,
+        fallback_reason="thin_product_evidence",
+        preprocessing_source="cleaned_html",
+    )
+    classification = type("Classification", (), {"page_class": "commerce_pdp"})()
+
+    evidence_pack = build_evidence_pack(snapshot, classification)
+
+    assert evidence_pack["fallback_used"] is True
+    assert evidence_pack["fallback_reason"] == "thin_product_evidence"
+    assert evidence_pack["preprocessing_source"] == "cleaned_html"
+    assert "fallback_reason:thin_product_evidence" in evidence_pack["quality_warning_inputs"]
+    assert "preprocessing_source:cleaned_html" in evidence_pack["quality_warning_inputs"]
+
+
 def test_evidence_builder_derives_facts_from_html_snapshot(fixtures_dir) -> None:
     fetcher = FixtureHtmlFetcher(
         base_dir=fixtures_dir.parent.parent / "artifacts" / "service_test_pages",
@@ -311,13 +330,18 @@ def test_evidence_builder_merges_admitted_ocr_blocks_into_facts() -> None:
     ocr_decision = type(
         "OcrDecision",
         (),
-        {"admitted_blocks": [{"text": "라네즈 워터 슬리핑 마스크 크림 타입 보습 진정 케어", "source": "image"}]},
+        {
+            "admitted_blocks": [{"text": "라네즈 워터 슬리핑 마스크 크림 타입 보습 진정 케어", "source": "image"}],
+            "line_groups": [{"text": "라네즈 워터 슬리핑 마스크 크림 타입 보습 진정 케어", "source_type": "ocr_line_group"}],
+            "direct_fact_candidates": [{"text": "라네즈 워터 슬리핑 마스크 크림 타입 보습 진정 케어", "source_type": "ocr_line_group"}],
+        },
     )()
 
     evidence_pack = build_evidence_pack(snapshot, classification, ocr_decision)
 
     assert evidence_pack["ocr_used"] is True
-    assert any(fact["source"].startswith("ocr:") for fact in evidence_pack["facts"])
+    assert evidence_pack["ocr_direct_fact_candidates"]
+    assert any(fact["source"].startswith("ocr_direct:") for fact in evidence_pack["facts"])
     assert any(fact["type"] in {"texture", "use_case", "benefit"} for fact in evidence_pack["facts"])
 
 

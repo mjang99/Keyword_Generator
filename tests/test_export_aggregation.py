@@ -90,10 +90,16 @@ def test_per_url_json_preserves_fixed_schema_rows() -> None:
         requested_platform_mode="both",
         generation_result=_sample_generation_result(),
         cache_hit=True,
+        fallback_used=True,
+        fallback_reason="thin_product_evidence",
+        preprocessing_source="cleaned_html",
     )
     payload = build_per_url_json_payload(success)
     assert payload["url_task_id"] == "ut_001"
     assert payload["cache_hit"] is True
+    assert payload["fallback_used"] is True
+    assert payload["fallback_reason"] == "thin_product_evidence"
+    assert payload["preprocessing_source"] == "cleaned_html"
     assert set(payload["rows"][0].keys()) == {
         "url",
         "product_name",
@@ -123,11 +129,17 @@ def test_failures_manifest_and_partial_completion_status() -> None:
         requested_platform_mode="both",
         failure_code="promo_heavy_commerce_landing",
         failure_detail="single-product identity not proven",
+        failure_reason_hints=["single-product identity was not proven strongly enough from product, price, and buy-intent signals"],
         quality_warning=None,
+        fallback_used=True,
+        fallback_reason="client_side_render_suspected",
+        preprocessing_source="cleaned_html",
     )
     manifest = build_failures_manifest([failure])
     assert manifest["failure_count"] == 1
     assert manifest["items"][0]["failure_code"] == "promo_heavy_commerce_landing"
+    assert manifest["items"][0]["failure_reason_hints"]
+    assert manifest["items"][0]["fallback_reason"] == "client_side_render_suspected"
     assert aggregate_job_status(successes=[success], failures=[failure]) == "PARTIAL_COMPLETED"
 
 

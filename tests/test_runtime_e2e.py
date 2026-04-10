@@ -198,6 +198,12 @@ def test_runtime_partial_completion_writes_summary_and_single_notification(
     failures = runtime.read_json_artifact(f"jobs/{job_id}/summary/failures.json")
     assert failures["failure_count"] == 1
     assert failures["items"][0]["failure_code"] == "promo_heavy_commerce_landing"
+    assert failures["items"][0]["failure_reason_hints"]
+
+    status_payload = runtime.build_job_status_payload(job_id)
+    assert status_payload["url_tasks"][1]["failure_reason_hints"]
+    assert status_payload["url_tasks"][0]["fallback_used"] is False
+    assert status_payload["url_tasks"][0]["preprocessing_source"] is None
 
     notifications = runtime.list_notification_records(job_id)
     assert len(notifications) == 1
@@ -239,6 +245,9 @@ def test_failed_generation_persists_partial_per_url_artifact_and_manifest_refere
 
     failure = runtime.read_json_artifact(task["failure_s3_key"])
     assert failure["failure_code"] == "generation_count_shortfall"
+    assert failure["failure_reason_hints"] == []
+    assert failure["fallback_used"] is False
+    assert failure["preprocessing_source"] is None
 
     manifest = runtime.read_json_artifact(f"jobs/{job_id}/summary/per_url_manifest.json")
     assert manifest["items"][0]["status"] == "FAILED_GENERATION"
