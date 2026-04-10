@@ -26,6 +26,7 @@ The Terraform scaffold under `infra/terraform/` manages:
 - two ECR repositories reserved for the future collection/OCR container workers
 - one shared IAM execution role for the current zip Lambda baseline when enabled
 - six current zip Lambda functions when enabled
+- one optional image-based `collection_worker` Lambda when enabled
 - one HTTP API for `POST /jobs` and `GET /jobs/{job_id}` when enabled
 - one EventBridge schedule for cache validity sweeps when enabled
 
@@ -55,6 +56,12 @@ If you deploy today, OCR still runs inside `collection_worker` when the OCR subp
 
 Do not assume that provisioning the `ocr` queue or ECR repos means OCR is already isolated at runtime. In the current baseline, OCR capacity, timeout, and memory planning still apply to the deployed `collection_worker`.
 
+For Crawl4AI fallback specifically:
+
+- zip packaging remains valid for the API, aggregation, notification, and cache-validity handlers
+- `collection_worker` must move to an image Lambda before `KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED=1` can be turned on in production
+- the image path exists to carry `crawl4ai`, `playwright`, Chromium, and browser OS dependencies without bloating the shared zip package
+
 ## Runtime Env Mapping
 
 The current Python runtime bootstrap reads these environment variables:
@@ -73,6 +80,15 @@ The current Python runtime bootstrap reads these environment variables:
 - `CACHE_VALIDITY_MIN_AGE_DAYS`
 
 The runtime ignores the OCR and generation queue URLs today, but Terraform still exports them because the design contract and future worker split already reserve those stages.
+
+When the image-based `collection_worker` is enabled, Terraform can also inject:
+
+- `KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED`
+- `KEYWORD_GENERATOR_CRAWL4AI_WAIT_FOR_IMAGES`
+- `KEYWORD_GENERATOR_CRAWL4AI_SIMULATE_USER`
+- `KEYWORD_GENERATOR_CRAWL4AI_REMOVE_OVERLAYS`
+- `KEYWORD_GENERATOR_CRAWL4AI_MAGIC`
+- `KEYWORD_GENERATOR_CRAWL4AI_ENABLE_STEALTH`
 
 To enable OCR in the current baseline, also set:
 
@@ -103,6 +119,7 @@ Recommended production posture for the current baseline:
 The baseline is intentionally progressive:
 
 - `enable_zip_lambdas=true` creates the current six Lambda functions and IAM role
+- `enable_collection_worker_image_lambda=true` swaps `collection_worker` to an image Lambda when `collection_worker_image_uri` is set
 - `enable_http_api=true` creates the HTTP API on top of the submit/get Lambda pair
 - `enable_cache_validity_schedule=true` attaches the daily EventBridge trigger
 
@@ -131,6 +148,12 @@ Useful local commands:
 
 - package current Lambda code: `powershell -ExecutionPolicy Bypass -File .\scripts\package_lambda.ps1`
 - upload a built zip to S3: `.\.venv-dev\Scripts\python.exe scripts\upload_lambda_package.py --file <zip> --bucket <bucket> --key <key> --region ap-northeast-2`
+- build/push the collection image: `powershell -ExecutionPolicy Bypass -File .\scripts\build_collection_worker_image.ps1 -RepositoryUrl <ecr_repo_url> -Tag <tag> -Push`
+
+Collection image note:
+
+- Lambda requires a single supported image manifest, so `scripts/build_collection_worker_image.ps1` now builds with `docker buildx --platform linux/amd64 --provenance=false --sbom=false`
+- if you remove those flags and push the default Docker Desktop manifest, Lambda may reject the image with `InvalidParameterValueException: The image manifest, config or layer media type ... is not supported`
 
 ## Naming Rule
 

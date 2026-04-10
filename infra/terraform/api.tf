@@ -38,7 +38,7 @@ resource "aws_apigatewayv2_integration" "submit" {
 
   api_id                 = aws_apigatewayv2_api.http[0].id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.current_zip["submit_api"].invoke_arn
+  integration_uri        = aws_lambda_function.current["submit_api"].invoke_arn
   integration_method     = "POST"
   payload_format_version = "2.0"
 }
@@ -48,7 +48,7 @@ resource "aws_apigatewayv2_integration" "get_job" {
 
   api_id                 = aws_apigatewayv2_api.http[0].id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.current_zip["get_job_api"].invoke_arn
+  integration_uri        = aws_lambda_function.current["get_job_api"].invoke_arn
   integration_method     = "POST"
   payload_format_version = "2.0"
 }
@@ -96,7 +96,7 @@ resource "aws_lambda_permission" "allow_http_api_submit" {
 
   statement_id  = "AllowExecutionFromHttpApiSubmit"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.current_zip["submit_api"].function_name
+  function_name = aws_lambda_function.current["submit_api"].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http[0].execution_arn}/*/*"
 }
@@ -106,7 +106,7 @@ resource "aws_lambda_permission" "allow_http_api_get_job" {
 
   statement_id  = "AllowExecutionFromHttpApiGetJob"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.current_zip["get_job_api"].function_name
+  function_name = aws_lambda_function.current["get_job_api"].function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http[0].execution_arn}/*/*"
 }

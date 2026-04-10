@@ -54,6 +54,11 @@ The current codebase exposes these direct Lambda entrypoints:
 
 This is the deployable baseline Terraform now supports. The separate OCR and generation workers remain part of the future target architecture, so the `ocr` and `generation` queues are provisioned now but not yet mapped to Lambda functions.
 
+`collection-worker` can now be deployed in two modes:
+
+- zip Lambda: no Crawl4AI runtime, suitable for plain HTTP collection only
+- image Lambda: carries Crawl4AI + Playwright + Chromium for fallback rendering
+
 Important deployment note:
 
 - If you deploy the current baseline today, OCR does not run in a standalone `ocr-worker` Lambda yet.
@@ -96,6 +101,12 @@ When enabling OCR in the current deployable baseline, also inject:
 | `KEYWORD_GENERATOR_OCR_TILING_ENABLED` | allow vertical tiling for long detail banners |
 | `KEYWORD_GENERATOR_OCR_LANGUAGE_ROUTING_ENABLED` | allow alternative recognizer routing for English-heavy assets |
 | `KEYWORD_GENERATOR_OCR_ALLOW_UNSUPPORTED` | local/dev override to run OCR on unsupported pages |
+| `KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED` | enable Crawl4AI fallback inside `collection-worker` |
+| `KEYWORD_GENERATOR_CRAWL4AI_WAIT_FOR_IMAGES` | wait for lazy-loaded images before returning fallback HTML |
+| `KEYWORD_GENERATOR_CRAWL4AI_SIMULATE_USER` | enable simulated user interactions in Crawl4AI fallback |
+| `KEYWORD_GENERATOR_CRAWL4AI_REMOVE_OVERLAYS` | remove overlay elements in Crawl4AI fallback |
+| `KEYWORD_GENERATOR_CRAWL4AI_MAGIC` | enable Crawl4AI magic mode |
+| `KEYWORD_GENERATOR_CRAWL4AI_ENABLE_STEALTH` | enable Crawl4AI stealth mode |
 
 ## Deployment Split
 
@@ -103,6 +114,7 @@ Terraform scaffold under `infra/terraform/` now manages:
 
 - shared persistent resources
 - current zip Lambda baseline when enabled
+- optional image-based collection worker when enabled
 - HTTP API when enabled
 - ECR repos for the future container workers
 - EventBridge cache sweep schedule when enabled

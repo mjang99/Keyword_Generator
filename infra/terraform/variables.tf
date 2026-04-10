@@ -97,6 +97,12 @@ variable "enable_zip_lambdas" {
   default     = false
 }
 
+variable "enable_collection_worker_image_lambda" {
+  type        = bool
+  description = "Whether to deploy collection-worker as a container image Lambda instead of the zip package."
+  default     = false
+}
+
 variable "enable_http_api" {
   type        = bool
   description = "Whether to create the HTTP API Gateway routes for submit/get job."
@@ -130,10 +136,59 @@ variable "zip_lambda_package_s3_object_version" {
   nullable    = true
 }
 
+variable "collection_worker_image_uri" {
+  type        = string
+  description = "Full ECR image URI for the image-based collection-worker Lambda."
+  default     = null
+  nullable    = true
+}
+
 variable "lambda_architectures" {
   type        = list(string)
   description = "Architectures for managed zip Lambda functions."
   default     = ["arm64"]
+}
+
+variable "collection_worker_image_architectures" {
+  type        = list(string)
+  description = "Architectures for the image-based collection-worker Lambda."
+  default     = ["x86_64"]
+}
+
+variable "collection_worker_enable_crawl4ai_fallback" {
+  type        = bool
+  description = "Whether the collection worker should enable the Crawl4AI fallback path at runtime."
+  default     = false
+}
+
+variable "collection_worker_crawl4ai_wait_for_images" {
+  type        = bool
+  description = "Whether the collection worker Crawl4AI fallback should wait for images before returning HTML."
+  default     = true
+}
+
+variable "collection_worker_crawl4ai_simulate_user" {
+  type        = bool
+  description = "Whether the collection worker Crawl4AI fallback should simulate user interactions."
+  default     = false
+}
+
+variable "collection_worker_crawl4ai_remove_overlays" {
+  type        = bool
+  description = "Whether the collection worker Crawl4AI fallback should try removing overlay elements."
+  default     = true
+}
+
+variable "collection_worker_crawl4ai_magic" {
+  type        = bool
+  description = "Whether the collection worker Crawl4AI fallback should enable magic mode."
+  default     = false
+}
+
+variable "collection_worker_crawl4ai_enable_stealth" {
+  type        = bool
+  description = "Whether the collection worker Crawl4AI fallback should enable stealth mode."
+  default     = false
 }
 
 variable "cache_validity_min_age_days" {

@@ -1,0 +1,16 @@
+.git
+.agents
+.deps
+.pytest_cache
+.terraform
+.tmp
+.tools
+.uv-cache
+.venv*
+artifacts
+infra/terraform/.terraform
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfplan
+tests
+tmp*

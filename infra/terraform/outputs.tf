@@ -31,7 +31,7 @@ output "dlq_urls" {
 }
 
 output "lambda_env_reference" {
-  value = {
+  value = merge({
     KEYWORD_GENERATOR_BUCKET                 = aws_s3_bucket.artifacts.bucket
     KEYWORD_GENERATOR_TABLE                  = aws_dynamodb_table.runtime.name
     KEYWORD_GENERATOR_COLLECTION_QUEUE_URL   = aws_sqs_queue.main["collection"].url
@@ -47,7 +47,14 @@ output "lambda_env_reference" {
     BEDROCK_MODEL_ID                         = var.bedrock_model_id
     BEDROCK_MAX_TOKENS                       = tostring(var.bedrock_max_tokens)
     CACHE_VALIDITY_MIN_AGE_DAYS              = tostring(var.cache_validity_min_age_days)
-  }
+  }, var.enable_collection_worker_image_lambda ? {
+    KEYWORD_GENERATOR_COLLECTION_CRAWL4AI_FALLBACK_ENABLED = var.collection_worker_enable_crawl4ai_fallback ? "1" : "0"
+    KEYWORD_GENERATOR_CRAWL4AI_WAIT_FOR_IMAGES             = var.collection_worker_crawl4ai_wait_for_images ? "1" : "0"
+    KEYWORD_GENERATOR_CRAWL4AI_SIMULATE_USER               = var.collection_worker_crawl4ai_simulate_user ? "1" : "0"
+    KEYWORD_GENERATOR_CRAWL4AI_REMOVE_OVERLAYS             = var.collection_worker_crawl4ai_remove_overlays ? "1" : "0"
+    KEYWORD_GENERATOR_CRAWL4AI_MAGIC                       = var.collection_worker_crawl4ai_magic ? "1" : "0"
+    KEYWORD_GENERATOR_CRAWL4AI_ENABLE_STEALTH              = var.collection_worker_crawl4ai_enable_stealth ? "1" : "0"
+  } : {})
   description = "Environment values to inject into Lambda functions."
 }
 
@@ -60,16 +67,16 @@ output "ecr_repository_urls" {
 
 output "lambda_function_names" {
   value = {
-    for name, fn in aws_lambda_function.current_zip : name => fn.function_name
+    for name, fn in aws_lambda_function.current : name => fn.function_name
   }
-  description = "Current zip Lambda function names when enabled."
+  description = "Managed Lambda function names when enabled."
 }
 
 output "lambda_function_arns" {
   value = {
-    for name, fn in aws_lambda_function.current_zip : name => fn.arn
+    for name, fn in aws_lambda_function.current : name => fn.arn
   }
-  description = "Current zip Lambda function ARNs when enabled."
+  description = "Managed Lambda function ARNs when enabled."
 }
 
 output "http_api_invoke_url" {
